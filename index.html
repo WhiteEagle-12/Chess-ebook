@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>ChessVision v4 - Camera & Full Scan</title>
+    <title>ChessVision v5 - Robust</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
     
@@ -18,7 +18,6 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 
     <style>
-        /* Custom scrollbar */
         ::-webkit-scrollbar { width: 8px; height: 8px; }
         ::-webkit-scrollbar-track { background: #1f2937; }
         ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
@@ -27,18 +26,24 @@
         .source-container { position: relative; overflow: hidden; display: inline-block; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5); touch-action: none; }
         .selection-box { border: 2px dashed #60a5fa; background-color: rgba(96, 165, 250, 0.2); position: absolute; pointer-events: none; z-index: 50; }
         
-        /* Chess Board Styles */
-        .chess-square { width: 12.5%; height: 12.5%; float: left; display: flex; align-items: center; justify-content: center; position: relative; }
-        
-        /* Pieces sit ABOVE the arrow canvas (Z-Index 20 vs 10) */
-        .piece { width: 80%; height: 80%; background-size: contain; background-repeat: no-repeat; background-position: center; cursor: grab; position: relative; z-index: 20; }
-        .piece:active { cursor: grabbing; }
-        
+        /* Board Colors */
         .white-square { background-color: #eeeed2; color: #769656; }
         .black-square { background-color: #769656; color: #eeeed2; }
         
-        /* Overlay for arrows */
-        #board-overlay-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
+        /* Piece Styling */
+        .piece { 
+            width: 100%; height: 100%; 
+            background-size: 85%; 
+            background-repeat: no-repeat; 
+            background-position: center; 
+            cursor: grab; 
+        }
+        .piece:active { cursor: grabbing; }
+
+        /* Layering Architecture */
+        .board-wrapper { position: relative; width: 100%; height: 100%; }
+        .board-layer { position: absolute; inset: 0; z-index: 10; display: flex; flex-wrap: wrap; }
+        .arrow-layer { position: absolute; inset: 0; z-index: 20; pointer-events: none; }
     </style>
 
     <script>
@@ -59,12 +64,16 @@
 
         // Robust FEN extractor
         const extractFen = (text) => {
+            // Priority 1: Full FEN with metadata
             const complexFenRegex = /([rnbqkpRNBQKP1-8]+\/){7}[rnbqkpRNBQKP1-8]+ [wb] [-KkQq]+ [-a-h36]+ \d+ \d+/;
-            const simpleFenRegex = /([rnbqkpRNBQKP1-8]+\/){7}[rnbqkpRNBQKP1-8]+/;
             const matchComplex = text.match(complexFenRegex);
             if (matchComplex) return matchComplex[0];
+
+            // Priority 2: Just the board position
+            const simpleFenRegex = /([rnbqkpRNBQKP1-8]+\/){7}[rnbqkpRNBQKP1-8]+/;
             const matchSimple = text.match(simpleFenRegex);
-            if (matchSimple) return matchSimple[0] + " w - - 0 1"; 
+            if (matchSimple) return matchSimple[0] + " w - - 0 1"; // Append default metadata
+            
             return null;
         };
 
@@ -105,7 +114,7 @@
                         <h2 className="text-xl font-bold mb-4 text-white"><i className="fas fa-cog mr-2"></i>Settings</h2>
                         <div className="mb-4">
                             <label className="block text-gray-400 text-sm font-bold mb-2">Google Gemini API Key</label>
-                            <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} className="w-full bg-gray-700 text-white border border-gray-600 rounded py-2 px-3 focus:outline-none focus:border-blue-500" />
+                            <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} className="w-full bg-gray-700 text-white border border-gray-600 rounded py-2 px-3 focus:outline-none focus:border-blue-500" placeholder="AIzaSy..." />
                         </div>
                         <div className="mb-6">
                             <label className="block text-gray-400 text-sm font-bold mb-2">Model ID</label>
@@ -120,24 +129,38 @@
         const ChessBoard = ({ fen, setFen, onMove, bestMoves, showArrows }) => {
             const [game, setGame] = useState(new Chess(fen));
             const [selectedSquare, setSelectedSquare] = useState(null);
-            const overlayRef = useRef(null);
-            const boardRef = useRef(null);
+            const canvasRef = useRef(null);
+            const containerRef = useRef(null);
 
+            // Safer FEN update
             useEffect(() => { 
                 try { 
+                    const validation = new Chess().validate_fen(fen); // Check validity first
+                    if (!validation || !validation.valid) {
+                         // console.warn("Invalid FEN ignored by board:", fen, validation);
+                         return;
+                    }
                     const newGame = new Chess(fen); 
                     setGame(newGame); 
-                } catch (e) { } 
+                } catch (e) { 
+                    console.error("Board update error:", e);
+                } 
             }, [fen]);
 
+            // Arrow Drawing
             useEffect(() => {
-                const canvas = overlayRef.current;
-                if (!canvas || !boardRef.current) return;
+                const canvas = canvasRef.current;
+                const container = containerRef.current;
+                if (!canvas || !container) return;
+                
                 const ctx = canvas.getContext('2d');
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
-                const rect = boardRef.current.getBoundingClientRect();
+                const rect = container.getBoundingClientRect();
+                
+                // Ensure canvas resolution matches display
                 canvas.width = rect.width;
                 canvas.height = rect.height;
+                
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
 
                 if (showArrows && bestMoves && bestMoves.length > 0) {
                     const topMoveStr = bestMoves[0].pv.split(' ')[0];
@@ -152,19 +175,21 @@
             const handleSquareClick = (square) => {
                 if (selectedSquare === square) { setSelectedSquare(null); return; }
                 if (selectedSquare) {
-                    const move = game.move({ from: selectedSquare, to: square, promotion: 'q' });
-                    if (move) { setFen(game.fen()); setSelectedSquare(null); if (onMove) onMove(game.fen()); } 
-                    else {
-                        const piece = game.get(square);
-                        if (piece && piece.color === game.turn()) setSelectedSquare(square); else setSelectedSquare(null);
-                    }
+                    try {
+                        const move = game.move({ from: selectedSquare, to: square, promotion: 'q' });
+                        if (move) { setFen(game.fen()); setSelectedSquare(null); if (onMove) onMove(game.fen()); } 
+                        else {
+                            const piece = game.get(square);
+                            if (piece && piece.color === game.turn()) setSelectedSquare(square); else setSelectedSquare(null);
+                        }
+                    } catch(e) { setSelectedSquare(null); }
                 } else {
                     const piece = game.get(square);
                     if (piece && piece.color === game.turn()) setSelectedSquare(square);
                 }
             };
 
-            const board = [];
+            const squares = [];
             for (let r = 0; r < 8; r++) {
                 for (let f = 0; f < 8; f++) {
                     const square = FILES[f] + RANKS[r];
@@ -177,12 +202,22 @@
                     if (isSelected) overlayStyle.backgroundColor = 'rgba(255, 255, 0, 0.5)';
                     else if (isLastMove) overlayStyle.backgroundColor = 'rgba(155, 199, 0, 0.41)';
 
-                    board.push(
-                        <div key={square} className={`${isBlack ? 'black-square' : 'white-square'} chess-square`} onClick={() => handleSquareClick(square)}>
-                            <div className="absolute inset-0" style={overlayStyle}></div>
-                            {piece && (<div className="piece" style={{ backgroundImage: `url(${PIECE_URLS[piece.type === 'p' && piece.color === 'w' ? 'P' : piece.type === 'p' && piece.color === 'b' ? 'p' : piece.color === 'w' ? piece.type.toUpperCase() : piece.type]})` }}></div>)}
-                            {f === 0 && <span className={`absolute top-0 left-1 text-xs font-bold ${isBlack ? 'text-[#eeeed2]' : 'text-[#769656]'}`}>{RANKS[r]}</span>}
-                            {r === 7 && <span className={`absolute bottom-0 right-1 text-xs font-bold ${isBlack ? 'text-[#eeeed2]' : 'text-[#769656]'}`}>{FILES[f]}</span>}
+                    // Determine Piece Key
+                    const pieceKey = piece ? `${piece.color}${piece.type}` : null;
+
+                    squares.push(
+                        <div key={square} style={{ width: '12.5%', height: '12.5%', position: 'relative' }} className={isBlack ? 'black-square' : 'white-square'} onClick={() => handleSquareClick(square)}>
+                            {/* Highlight Overlay */}
+                            <div className="absolute inset-0 pointer-events-none" style={overlayStyle}></div>
+                            
+                            {/* Coordinate Labels */}
+                            {f === 0 && <span className={`absolute top-0 left-0.5 text-[10px] font-bold ${isBlack ? 'text-[#eeeed2]' : 'text-[#769656]'}`}>{RANKS[r]}</span>}
+                            {r === 7 && <span className={`absolute bottom-0 right-0.5 text-[10px] font-bold ${isBlack ? 'text-[#eeeed2]' : 'text-[#769656]'}`}>{FILES[f]}</span>}
+                            
+                            {/* The Piece */}
+                            {piece && (
+                                <div className="piece" style={{ backgroundImage: `url(${PIECE_URLS[pieceKey === 'wp' ? 'P' : pieceKey === 'bp' ? 'p' : piece.color === 'w' ? piece.type.toUpperCase() : piece.type]})` }}></div>
+                            )}
                         </div>
                     );
                 }
@@ -190,10 +225,15 @@
 
             return (
                 <div className="flex flex-col items-center w-full max-w-[500px]">
-                    <div ref={boardRef} className="w-full aspect-square border-4 border-gray-700 shadow-2xl relative">
-                        <canvas ref={overlayRef} id="board-overlay-canvas"></canvas>
-                        {board}
+                    <div ref={containerRef} className="w-full aspect-square border-4 border-gray-700 shadow-2xl board-wrapper">
+                        {/* Layer 1: The Board & Pieces */}
+                        <div className="board-layer">
+                            {squares}
+                        </div>
+                        {/* Layer 2: The Arrows (Top) */}
+                        <canvas ref={canvasRef} className="arrow-layer"></canvas>
                     </div>
+                    
                     <div className="w-full mt-4">
                         <label className="text-xs text-gray-500 uppercase font-bold tracking-wider">FEN String</label>
                         <input className="w-full bg-gray-800 border border-gray-600 text-gray-300 text-xs font-mono p-2 rounded mt-1 focus:border-blue-500 outline-none" value={fen} onChange={(e) => { setFen(e.target.value); if(onMove) onMove(e.target.value); }} />
@@ -269,7 +309,6 @@
                 }
             }, [fen]);
 
-            // Rendering Logic
             useEffect(() => {
                 if (!canvasRef.current) return;
                 const canvas = canvasRef.current;
@@ -317,11 +356,8 @@
                 } else { setErrorMsg("Unsupported file type."); }
             };
 
-            const triggerCamera = () => {
-                if (cameraInputRef.current) cameraInputRef.current.click();
-            };
+            const triggerCamera = () => { if (cameraInputRef.current) cameraInputRef.current.click(); };
 
-            // --- AI Analysis Logic ---
             const analyzeImageBase64 = async (base64Image) => {
                 if (!apiKey) { setShowSettings(true); return; }
                 setIsLoading(true); 
@@ -334,7 +370,19 @@
                     
                     const rawText = data.candidates[0].content.parts[0].text;
                     const cleanedFen = extractFen(rawText);
-                    if (cleanedFen) setFen(cleanedFen); else setErrorMsg("AI returned invalid FEN.");
+                    
+                    if (cleanedFen) {
+                        // Check if FEN is actually valid before creating game
+                        const testGame = new Chess();
+                        const valid = testGame.validate_fen(cleanedFen);
+                        if (valid && valid.valid) {
+                            setFen(cleanedFen);
+                        } else {
+                            setErrorMsg("AI returned an invalid board position.");
+                        }
+                    } else { 
+                        setErrorMsg("AI could not recognize a board.");
+                    }
                 } catch (err) { setErrorMsg("Analysis failed: " + err.message); } 
                 finally { setIsLoading(false); setSelectionBox(null); }
             };
@@ -345,24 +393,19 @@
                 const rect = containerRef.current.getBoundingClientRect();
                 const scaleX = canvas.width / rect.width; const scaleY = canvas.height / rect.height;
                 const cropW = selectionBox.w * scaleX; const cropH = selectionBox.h * scaleY;
-                
                 const tempCanvas = document.createElement('canvas');
                 tempCanvas.width = cropW; tempCanvas.height = cropH;
                 tempCanvas.getContext('2d').drawImage(canvas, selectionBox.x * scaleX, selectionBox.y * scaleY, cropW, cropH, 0, 0, cropW, cropH);
-                
-                // Low quality jpeg to speed up upload for just FEN recognition
                 const base64Image = tempCanvas.toDataURL('image/jpeg', 0.8).split(',')[1];
                 analyzeImageBase64(base64Image);
             };
 
             const scanWholePage = async () => {
                 if (!canvasRef.current) return;
-                // Use a slightly lower quality to prevent hitting payload limits on large PDF renders
                 const base64Image = canvasRef.current.toDataURL('image/jpeg', 0.7).split(',')[1];
                 analyzeImageBase64(base64Image);
             };
 
-            // Selection Logic (Pointer/Mouse)
             const getPointerCoords = (e) => {
                 if (!containerRef.current) return { x: 0, y: 0 };
                 const rect = containerRef.current.getBoundingClientRect();
@@ -393,20 +436,18 @@
                     <header className="bg-gray-800 border-b border-gray-700 p-4 flex justify-between items-center shrink-0">
                         <div className="flex items-center gap-2">
                             <i className="fas fa-chess-knight text-blue-500 text-2xl"></i>
-                            <h1 className="text-xl font-bold tracking-tight">Chess<span className="text-blue-500">Vision</span> v4</h1>
+                            <h1 className="text-xl font-bold tracking-tight">Chess<span className="text-blue-500">Vision</span> v5</h1>
                         </div>
                         <div className="flex gap-4">
                              <button onClick={triggerCamera} className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded border border-gray-600 transition flex items-center gap-2">
                                 <i className="fas fa-camera"></i> <span className="hidden sm:inline">Camera</span>
                             </button>
                             <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFileUpload} />
-
                             <button onClick={() => setShowSettings(true)} className="text-gray-400 hover:text-white transition"><i className="fas fa-cog text-xl"></i></button>
                         </div>
                     </header>
                     <div className="flex flex-1 overflow-hidden">
                         <div className="flex-1 bg-gray-900 p-4 flex flex-col items-center overflow-auto border-r border-gray-800 relative select-none" onMouseUp={handlePointerUp} onTouchEnd={handlePointerUp}>
-                            
                             <div className="w-full max-w-3xl flex flex-wrap justify-between items-center mb-4 sticky top-0 z-20 bg-gray-900/90 backdrop-blur py-2 gap-2">
                                 <div className="flex gap-2">
                                     <label className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded cursor-pointer text-sm font-medium transition flex items-center">
@@ -415,11 +456,10 @@
                                     </label>
                                     {(pdfDoc || imageSrc) && (
                                         <button onClick={scanWholePage} className="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-sm font-medium transition">
-                                            <i className="fas fa-expand mr-2"></i>Scan Full Page
+                                            <i className="fas fa-expand mr-2"></i>Full Scan
                                         </button>
                                     )}
                                 </div>
-
                                 {pdfDoc && (
                                     <div className="flex items-center gap-4 bg-gray-800 px-3 py-1 rounded-full border border-gray-700">
                                         <button onClick={() => setPageNum(p => Math.max(1, p - 1))} className="text-gray-400 hover:text-white"><i className="fas fa-chevron-left"></i></button>
@@ -428,7 +468,6 @@
                                     </div>
                                 )}
                             </div>
-
                             {(pdfDoc || imageSrc) ? (
                                 <div className="relative group">
                                     <div ref={containerRef} className="source-container cursor-crosshair border border-gray-700" onMouseDown={handlePointerDown} onMouseMove={handlePointerMove} onTouchStart={handlePointerDown} onTouchMove={handlePointerMove}>
@@ -439,24 +478,22 @@
                                             </div>
                                         )}
                                     </div>
-                                    <p className="text-gray-500 text-xs mt-2 opacity-70"><i className="fas fa-crop mr-1"></i> Drag box to crop specific diagram</p>
                                 </div>
                             ) : (
                                 <div className="flex-1 flex flex-col items-center justify-center text-gray-500 gap-4">
                                     <div className="flex gap-4">
                                          <div className="flex flex-col items-center p-6 border-2 border-dashed border-gray-700 rounded-lg hover:bg-gray-800 transition cursor-pointer" onClick={() => document.querySelector('input[type=file]').click()}>
                                             <i className="fas fa-file-upload text-3xl mb-2"></i>
-                                            <span>Upload PDF/Image</span>
+                                            <span>Upload</span>
                                          </div>
                                          <div className="flex flex-col items-center p-6 border-2 border-dashed border-gray-700 rounded-lg hover:bg-gray-800 transition cursor-pointer" onClick={triggerCamera}>
                                             <i className="fas fa-camera text-3xl mb-2"></i>
-                                            <span>Take Photo</span>
+                                            <span>Camera</span>
                                          </div>
                                     </div>
                                 </div>
                             )}
                         </div>
-
                         <div className="w-[300px] md:w-[400px] bg-gray-800 p-4 flex flex-col border-l border-gray-700 shrink-0 overflow-y-auto hidden md:flex">
                             <div className="flex justify-between items-center mb-4 border-b border-gray-700 pb-2">
                                 <h2 className="text-lg font-bold text-gray-200">Analysis Board</h2>
@@ -485,7 +522,6 @@
                             )}
                         </div>
                     </div>
-                    
                     <div className="md:hidden p-4 bg-gray-800 border-t border-gray-700 shrink-0 h-1/3 min-h-[300px] overflow-y-auto overflow-x-hidden">
                          <div className="flex justify-between mb-2">
                             <span className={`font-mono font-bold ${evalColorStr}`}>Eval: {mainEval}</span>
@@ -493,7 +529,6 @@
                          </div>
                          <ChessBoard fen={fen} setFen={setFen} onMove={(f) => setFen(f)} bestMoves={sortedMoves} showArrows={showBestMoves} />
                     </div>
-
                     <SettingsModal isOpen={showSettings} onClose={() => setShowSettings(false)} apiKey={apiKey} setApiKey={setApiKey} modelId={modelId} setModelId={setModelId} />
                     {isLoading && (
                         <div className="fixed inset-0 bg-black bg-opacity-80 flex flex-col items-center justify-center z-50">
