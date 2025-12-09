@@ -3,608 +3,516 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ChessVision.ai - Stable Release</title>
+    <title>ChessVision - AI PDF Analyzer</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                        chess: { 
-                            board: '#769656', 
-                            light: '#eeeed2',
-                            dark: '#111827',
-                            panel: '#1f2937'
-                        }
-                    }
-                }
-            }
-        }
-    </script>
-    <style>
-        body { background-color: #111827; color: #e5e7eb; margin: 0; font-family: 'Inter', sans-serif; overflow: hidden; }
-        .scrollbar-hide::-webkit-scrollbar { display: none; }
-        .custom-loader {
-            border: 4px solid rgba(255, 255, 255, 0.1);
-            border-left-color: #3b82f6;
-            border-radius: 50%;
-            width: 24px;
-            height: 24px;
-            animation: spin 1s linear infinite;
-        }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        canvas { touch-action: none; } 
-    </style>
-
+    
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        /* Custom scrollbar for dark theme */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #1f2937; }
+        ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+        
+        /* PDF and Selection Styles */
+        .pdf-container { position: relative; overflow: hidden; display: inline-block; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5); }
+        .selection-box { border: 2px dashed #60a5fa; background-color: rgba(96, 165, 250, 0.2); position: absolute; pointer-events: none; }
+        
+        /* Chess Board Styles */
+        .chess-square { width: 12.5%; height: 12.5%; float: left; display: flex; align-items: center; justify-content: center; position: relative; }
+        .piece { width: 80%; height: 80%; background-size: contain; background-repeat: no-repeat; background-position: center; cursor: grab; z-index: 10; }
+        .piece:active { cursor: grabbing; }
+        .white-square { background-color: #eeeed2; color: #769656; }
+        .black-square { background-color: #769656; color: #eeeed2; }
+    </style>
+
     <script>
-        window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+        // PDF.js Worker setup
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     </script>
 </head>
-<body>
+<body class="bg-gray-900 text-gray-100 font-sans h-screen overflow-hidden">
     <div id="root"></div>
 
     <script type="text/babel">
         const { useState, useEffect, useRef, useCallback } = React;
 
-        /** * SERVICE: GEMINI API HANDLER 
-         * Handles the communication with Google's generative AI.
-         */
-        const GeminiService = {
-            async analyze(base64Image, apiKey, modelId) {
-                if (!apiKey) throw new Error("Missing API Key");
-                
-                // Fallback to flash if modelId is empty
-                const model = modelId || 'gemini-1.5-flash';
-                const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-
-                const payload = {
-                    contents: [{
-                        parts: [
-                            { text: "Look at this chess board. Return ONLY the FEN string for this position. Do not explain. If unsure of whose turn it is, assume 'w'. Example format: rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" },
-                            { inlineData: { mimeType: "image/png", data: base64Image.split(',')[1] } }
-                        ]
-                    }]
-                };
-
-                const response = await fetch(url, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-
-                if (!response.ok) {
-                    const errorData = await response.json();
-                    throw new Error(errorData.error?.message || `API Error: ${response.status}`);
-                }
-
-                const data = await response.json();
-                const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-                
-                if (!text) throw new Error("AI returned no text.");
-                
-                // Clean the FEN (remove markdown code blocks if present)
-                const cleanFen = text.replace(/```/g, '').replace(/fen/i, '').trim().split('\n')[0];
-                return cleanFen;
-            }
+        // --- Constants ---
+        const STOCKFISH_URL = "https://cdnjs.cloudflare.com/ajax/libs/stockfish.js/10.0.0/stockfish.js";
+        
+        // Piece SVGs mapped for display
+        const PIECE_URLS = {
+            'p': 'https://upload.wikimedia.org/wikipedia/commons/c/c7/Chess_pdt45.svg',
+            'r': 'https://upload.wikimedia.org/wikipedia/commons/f/ff/Chess_rdt45.svg',
+            'n': 'https://upload.wikimedia.org/wikipedia/commons/e/ef/Chess_ndt45.svg',
+            'b': 'https://upload.wikimedia.org/wikipedia/commons/9/98/Chess_bdt45.svg',
+            'q': 'https://upload.wikimedia.org/wikipedia/commons/4/47/Chess_qdt45.svg',
+            'k': 'https://upload.wikimedia.org/wikipedia/commons/f/f0/Chess_kdt45.svg',
+            'P': 'https://upload.wikimedia.org/wikipedia/commons/4/45/Chess_plt45.svg',
+            'R': 'https://upload.wikimedia.org/wikipedia/commons/7/72/Chess_rlt45.svg',
+            'N': 'https://upload.wikimedia.org/wikipedia/commons/7/70/Chess_nlt45.svg',
+            'B': 'https://upload.wikimedia.org/wikipedia/commons/b/b1/Chess_blt45.svg',
+            'Q': 'https://upload.wikimedia.org/wikipedia/commons/1/15/Chess_qlt45.svg',
+            'K': 'https://upload.wikimedia.org/wikipedia/commons/4/42/Chess_klt45.svg'
         };
 
-        /**
-         * COMPONENT: ICONS
-         */
-        const Icon = ({ p, size=20, className }) => (
-            <svg xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-                {p}
-            </svg>
-        );
-        const Icons = {
-            Upload: () => <Icon p={<><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></>} />,
-            Settings: () => <Icon p={<><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></>} />,
-            Check: () => <Icon p={<polyline points="20 6 9 17 4 12"/>} />,
-            X: () => <Icon p={<><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></>} />,
-            ArrowRight: () => <Icon p={<><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></>} />,
-            ArrowLeft: () => <Icon p={<><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></>} />,
-            Scan: () => <Icon p={<path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/>} />,
+        // --- Components ---
+
+        // 1. Settings Modal
+        const SettingsModal = ({ isOpen, onClose, apiKey, setApiKey, modelId, setModelId }) => {
+            if (!isOpen) return null;
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
+                    <div className="bg-gray-800 rounded-lg shadow-xl w-full max-w-md p-6 border border-gray-700">
+                        <h2 className="text-xl font-bold mb-4 text-white"><i className="fas fa-cog mr-2"></i>Settings</h2>
+                        
+                        <div className="mb-4">
+                            <label className="block text-gray-400 text-sm font-bold mb-2">Google Gemini API Key</label>
+                            <input 
+                                type="password" 
+                                value={apiKey} 
+                                onChange={(e) => setApiKey(e.target.value)}
+                                className="w-full bg-gray-700 text-white border border-gray-600 rounded py-2 px-3 focus:outline-none focus:border-blue-500"
+                                placeholder="AIzaSy..."
+                            />
+                            <p className="text-xs text-gray-500 mt-1">Key is stored locally in your browser.</p>
+                        </div>
+
+                        <div className="mb-6">
+                            <label className="block text-gray-400 text-sm font-bold mb-2">Model ID</label>
+                            <input 
+                                type="text" 
+                                value={modelId} 
+                                onChange={(e) => setModelId(e.target.value)}
+                                className="w-full bg-gray-700 text-white border border-gray-600 rounded py-2 px-3 focus:outline-none focus:border-blue-500"
+                            />
+                        </div>
+
+                        <div className="flex justify-end gap-2">
+                            <button 
+                                onClick={onClose}
+                                className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded transition"
+                            >
+                                Save & Close
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
         };
 
-        /**
-         * COMPONENT: CHESS BOARD
-         * Interactive board that displays FEN and allows moves
-         */
-        const ChessBoard = ({ fen, onMove }) => {
-            const [boardState, setBoardState] = useState([]);
+        // 2. Interactive Chess Board
+        const ChessBoard = ({ fen, setFen, onMove, engineEval }) => {
+            const [game, setGame] = useState(new Chess(fen));
             const [selectedSquare, setSelectedSquare] = useState(null);
-
-            // Parse FEN to 8x8 grid
+            
+            // Sync internal game state when FEN prop changes externally
             useEffect(() => {
-                const rows = fen.split(' ')[0].split('/');
-                const grid = rows.map(r => {
-                    let row = [];
-                    for(let char of r) {
-                        if(isNaN(char)) row.push(char);
-                        else row.push(...Array(parseInt(char)).fill(null));
-                    }
-                    return row;
-                });
-                setBoardState(grid);
+                try {
+                    const newGame = new Chess(fen);
+                    setGame(newGame);
+                } catch (e) {
+                    // Ignore invalid FENs temporarily while typing
+                }
             }, [fen]);
 
-            const handleSquareClick = (r, c) => {
-                const files = ['a','b','c','d','e','f','g','h'];
-                const rank = 8 - r;
-                const file = files[c];
-                const square = `${file}${rank}`;
-
-                // Deselect
+            const handleSquareClick = (square) => {
                 if (selectedSquare === square) {
                     setSelectedSquare(null);
                     return;
                 }
 
-                // Move
                 if (selectedSquare) {
-                    const success = onMove(selectedSquare, square);
-                    if (success) {
+                    const move = game.move({
+                        from: selectedSquare,
+                        to: square,
+                        promotion: 'q' 
+                    });
+
+                    if (move) {
+                        setFen(game.fen());
                         setSelectedSquare(null);
-                        return;
+                        if (onMove) onMove(game.fen());
+                    } else {
+                        const piece = game.get(square);
+                        if (piece && piece.color === game.turn()) {
+                            setSelectedSquare(square);
+                        } else {
+                            setSelectedSquare(null);
+                        }
+                    }
+                } else {
+                    const piece = game.get(square);
+                    if (piece && piece.color === game.turn()) {
+                        setSelectedSquare(square);
                     }
                 }
+            };
 
-                // Select
-                if (boardState[r][c]) {
-                    setSelectedSquare(square);
+            const board = [];
+            const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+            const ranks = ['8', '7', '6', '5', '4', '3', '2', '1'];
+            
+            for (let r = 0; r < 8; r++) {
+                for (let f = 0; f < 8; f++) {
+                    const square = files[f] + ranks[r];
+                    const isBlack = (r + f) % 2 === 1;
+                    const piece = game.get(square);
+                    const isSelected = selectedSquare === square;
+                    const lastMove = game.history({ verbose: true }).pop();
+                    const isLastMove = lastMove && (lastMove.from === square || lastMove.to === square);
+
+                    let bgClass = isBlack ? 'black-square' : 'white-square';
+                    let overlayStyle = {};
+                    
+                    if (isSelected) overlayStyle.backgroundColor = 'rgba(255, 255, 0, 0.5)';
+                    else if (isLastMove) overlayStyle.backgroundColor = 'rgba(155, 199, 0, 0.41)';
+
+                    board.push(
+                        <div key={square} className={`${bgClass} chess-square`} onClick={() => handleSquareClick(square)}>
+                            <div className="absolute inset-0" style={overlayStyle}></div>
+                            {piece && (
+                                <div 
+                                    className="piece" 
+                                    style={{ backgroundImage: `url(${PIECE_URLS[piece.type === 'p' && piece.color === 'w' ? 'P' : piece.type === 'p' && piece.color === 'b' ? 'p' : piece.color === 'w' ? piece.type.toUpperCase() : piece.type]})` }}
+                                ></div>
+                            )}
+                            {f === 0 && <span className={`absolute top-0 left-1 text-xs font-bold ${isBlack ? 'text-[#eeeed2]' : 'text-[#769656]'}`}>{ranks[r]}</span>}
+                            {r === 7 && <span className={`absolute bottom-0 right-1 text-xs font-bold ${isBlack ? 'text-[#eeeed2]' : 'text-[#769656]'}`}>{files[f]}</span>}
+                        </div>
+                    );
                 }
-            };
-
-            const getPieceImage = (code) => {
-                if(!code) return null;
-                const color = code === code.toUpperCase() ? 'w' : 'b';
-                const type = code.toLowerCase();
-                // Wikimedia Commons assets
-                const urlMap = {
-                    w: { p: '4/45/Chess_plt45.svg', r: '7/72/Chess_rlt45.svg', n: '7/70/Chess_nlt45.svg', b: 'b/b1/Chess_blt45.svg', q: '1/15/Chess_qlt45.svg', k: '4/42/Chess_klt45.svg' },
-                    b: { p: 'c/c7/Chess_pdt45.svg', r: 'f/ff/Chess_rdt45.svg', n: 'e/ef/Chess_ndt45.svg', b: '9/98/Chess_bdt45.svg', q: '4/47/Chess_qdt45.svg', k: 'f/f0/Chess_kdt45.svg' }
-                };
-                return `https://upload.wikimedia.org/wikipedia/commons/${urlMap[color][type]}`;
-            };
+            }
 
             return (
-                <div className="grid grid-cols-8 aspect-square border-4 border-gray-800 rounded-sm overflow-hidden bg-[#eeeed2]">
-                    {boardState.map((row, r) => row.map((piece, c) => {
-                        const isDark = (r + c) % 2 === 1;
-                        const files = ['a','b','c','d','e','f','g','h'];
-                        const sqName = `${files[c]}${8-r}`;
-                        const isSelected = selectedSquare === sqName;
-
-                        return (
-                            <div 
-                                key={`${r}-${c}`} 
-                                onClick={() => handleSquareClick(r,c)}
-                                className={`relative flex items-center justify-center cursor-pointer 
-                                    ${isDark ? 'bg-[#769656]' : ''} 
-                                    ${isSelected ? 'ring-inset ring-4 ring-yellow-400' : ''}`}
-                            >
-                                {piece && <img src={getPieceImage(piece)} className="w-[85%] select-none pointer-events-none drop-shadow-sm" />}
-                                {/* Coordinates */}
-                                {c === 0 && <span className={`absolute top-0.5 left-1 text-[10px] font-bold ${isDark ? 'text-[#eeeed2]' : 'text-[#769656]'}`}>{8-r}</span>}
-                                {r === 7 && <span className={`absolute bottom-0 right-1 text-[10px] font-bold ${isDark ? 'text-[#eeeed2]' : 'text-[#769656]'}`}>{files[c]}</span>}
-                            </div>
-                        )
-                    }))}
+                <div className="flex flex-col items-center w-full max-w-[500px]">
+                    <div className="w-full bg-gray-800 rounded p-2 mb-2 flex justify-between items-center border border-gray-700">
+                        <span className="text-gray-400 font-mono text-sm">Evaluation:</span>
+                        <span className={`font-mono font-bold ${engineEval.startsWith('+') || engineEval.includes('Mate') ? 'text-green-400' : 'text-red-400'}`}>
+                            {engineEval || "Calculating..."}
+                        </span>
+                    </div>
+                    <div className="w-full aspect-square border-4 border-gray-700 shadow-2xl">
+                        {board}
+                    </div>
+                    <div className="w-full mt-4">
+                        <label className="text-xs text-gray-500 uppercase font-bold tracking-wider">FEN String</label>
+                        <input 
+                            className="w-full bg-gray-800 border border-gray-600 text-gray-300 text-xs font-mono p-2 rounded mt-1 focus:border-blue-500 outline-none"
+                            value={fen}
+                            onChange={(e) => {
+                                setFen(e.target.value); 
+                                if(onMove) onMove(e.target.value);
+                            }}
+                        />
+                    </div>
                 </div>
             );
         };
 
-        /**
-         * MAIN APP COMPONENT
-         */
+        // --- Main App ---
         const App = () => {
-            // -- State: App Logic --
-            const [mode, setMode] = useState('upload'); // 'upload' | 'read' | 'analyze'
-            const [pdfDoc, setPdfDoc] = useState(null);
-            const [pageNum, setPageNum] = useState(1);
-            const [scale, setScale] = useState(1.5);
-            
-            // -- State: Settings --
-            const [showSettings, setShowSettings] = useState(false);
+            // State
             const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_api_key') || '');
             const [modelId, setModelId] = useState(localStorage.getItem('gemini_model_id') || 'gemini-1.5-flash');
+            const [showSettings, setShowSettings] = useState(false);
+            const [isLoading, setIsLoading] = useState(false);
+            const [loadingMsg, setLoadingMsg] = useState('');
+            const [errorMsg, setErrorMsg] = useState('');
 
-            // -- State: Selection & Vision --
-            const [selection, setSelection] = useState(null); // {x, y, w, h}
-            const [isScanning, setIsScanning] = useState(false);
-            const [errorMsg, setErrorMsg] = useState(null);
-
-            // -- State: Chess Engine --
-            const [fen, setFen] = useState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
-            const [evaluation, setEvaluation] = useState('0.00');
-            const [bestLine, setBestLine] = useState('');
-            
-            // -- Refs --
+            // PDF
+            const [pdfDoc, setPdfDoc] = useState(null);
+            const [pageNum, setPageNum] = useState(1);
             const canvasRef = useRef(null);
-            const selectionStartRef = useRef(null);
-            const gameRef = useRef(new window.Chess());
-            const stockfishRef = useRef(null);
+            const containerRef = useRef(null);
 
-            // -- Effects --
+            // Selection
+            const [isSelecting, setIsSelecting] = useState(false);
+            const [selectionStart, setSelectionStart] = useState({ x: 0, y: 0 });
+            const [selectionBox, setSelectionBox] = useState(null);
 
-            // 1. Initialize Stockfish
+            // Analysis
+            const [fen, setFen] = useState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
+            const [engineEval, setEngineEval] = useState('0.0');
+            const stockfishWorker = useRef(null);
+
+            // --- Effects ---
+
             useEffect(() => {
-                const initStockfish = async () => {
-                    try {
-                        const blob = await (await fetch('[https://cdnjs.cloudflare.com/ajax/libs/stockfish.js/10.0.0/stockfish.js')).blob](https://cdnjs.cloudflare.com/ajax/libs/stockfish.js/10.0.0/stockfish.js')).blob)();
-                        const url = URL.createObjectURL(blob);
-                        stockfishRef.current = new Worker(url);
+                if (apiKey) localStorage.setItem('gemini_api_key', apiKey);
+                if (modelId) localStorage.setItem('gemini_model_id', modelId);
+            }, [apiKey, modelId]);
+
+            // Init Stockfish Blob Worker
+            useEffect(() => {
+                fetch(STOCKFISH_URL)
+                    .then(r => r.text())
+                    .then(scriptContent => {
+                        const blob = new Blob([scriptContent], { type: 'application/javascript' });
+                        const workerUrl = URL.createObjectURL(blob);
+                        stockfishWorker.current = new Worker(workerUrl);
                         
-                        stockfishRef.current.onmessage = (e) => {
-                            const msg = e.data;
-                            if (msg.includes('score cp')) {
-                                const match = msg.match(/score cp (-?\d+)/);
-                                if (match) setEvaluation((parseInt(match[1]) / 100).toFixed(2));
-                            } else if (msg.includes('score mate')) {
-                                const match = msg.match(/score mate (-?\d+)/);
-                                if (match) setEvaluation(`#${match[1]}`);
+                        stockfishWorker.current.onmessage = (e) => {
+                            const line = e.data;
+                            if (line.startsWith('info') && line.includes('score')) {
+                                const parts = line.split(' ');
+                                const scoreIdx = parts.indexOf('score');
+                                if (scoreIdx !== -1) {
+                                    const type = parts[scoreIdx + 1]; // cp or mate
+                                    const val = parseInt(parts[scoreIdx + 2]);
+                                    if (type === 'cp') setEngineEval((val / 100).toFixed(2));
+                                    else if (type === 'mate') setEngineEval(`#M${val}`);
+                                }
                             }
                         };
-                    } catch (e) {
-                        console.error("Stockfish failed to load", e);
-                    }
-                };
-                initStockfish();
-                return () => stockfishRef.current?.terminate();
+                        
+                        stockfishWorker.current.postMessage('uci');
+                        stockfishWorker.current.postMessage('isready');
+                    });
+                return () => { if (stockfishWorker.current) stockfishWorker.current.terminate(); };
             }, []);
 
-            // 2. Trigger Analysis when FEN changes (in Analyze mode)
+            // Trigger Engine on FEN change
             useEffect(() => {
-                if (mode === 'analyze' && stockfishRef.current) {
-                    setEvaluation('...');
-                    stockfishRef.current.postMessage('uci');
-                    stockfishRef.current.postMessage(`position fen ${fen}`);
-                    stockfishRef.current.postMessage('go depth 18');
+                if (stockfishWorker.current) {
+                    stockfishWorker.current.postMessage('stop');
+                    stockfishWorker.current.postMessage(`position fen ${fen}`);
+                    stockfishWorker.current.postMessage('go depth 15');
                 }
-            }, [fen, mode]);
+            }, [fen]);
 
-            // 3. Render PDF Page
+            // Render PDF Page
             useEffect(() => {
                 if (!pdfDoc || !canvasRef.current) return;
                 
                 const renderPage = async () => {
-                    const page = await pdfDoc.getPage(pageNum);
-                    const viewport = page.getViewport({ scale });
-                    const canvas = canvasRef.current;
-                    const ctx = canvas.getContext('2d');
-                    
-                    canvas.height = viewport.height;
-                    canvas.width = viewport.width;
+                    try {
+                        const page = await pdfDoc.getPage(pageNum);
+                        const viewport = page.getViewport({ scale: 1.5 }); // High res
+                        
+                        const canvas = canvasRef.current;
+                        const context = canvas.getContext('2d');
+                        
+                        canvas.height = viewport.height;
+                        canvas.width = viewport.width;
 
-                    await page.render({ canvasContext: ctx, viewport }).promise;
+                        await page.render({
+                            canvasContext: context,
+                            viewport: viewport
+                        }).promise;
+                    } catch (err) {
+                        setErrorMsg("Error rendering page.");
+                    }
                 };
                 renderPage();
-            }, [pdfDoc, pageNum, scale]);
+            }, [pdfDoc, pageNum]);
 
-
-            // -- Handlers --
+            // --- Handlers ---
 
             const handleFileUpload = (e) => {
                 const file = e.target.files[0];
-                if (!file) return;
-                
-                const reader = new FileReader();
-                reader.onload = async (ev) => {
-                    try {
-                        const loadingTask = window.pdfjsLib.getDocument(new Uint8Array(ev.target.result));
-                        const pdf = await loadingTask.promise;
-                        setPdfDoc(pdf);
-                        setMode('read');
-                    } catch (err) {
-                        alert("Error reading PDF: " + err.message);
-                    }
-                };
-                reader.readAsArrayBuffer(file);
+                if (file && file.type === 'application/pdf') {
+                    const reader = new FileReader();
+                    reader.onload = async (ev) => {
+                        try {
+                            const typedarray = new Uint8Array(ev.target.result);
+                            const pdf = await pdfjsLib.getDocument(typedarray).promise;
+                            setPdfDoc(pdf);
+                            setPageNum(1);
+                            setErrorMsg('');
+                        } catch (err) {
+                            setErrorMsg("Invalid PDF file.");
+                        }
+                    };
+                    reader.readAsArrayBuffer(file);
+                }
             };
 
-            const saveSettings = () => {
-                localStorage.setItem('gemini_api_key', apiKey);
-                localStorage.setItem('gemini_model_id', modelId);
-                setShowSettings(false);
+            // Selection Math
+            const getRelativeCoords = (e) => {
+                const rect = containerRef.current.getBoundingClientRect();
+                return { x: e.clientX - rect.left, y: e.clientY - rect.top };
             };
 
-            // Canvas Selection Logic
             const handleMouseDown = (e) => {
-                if (mode !== 'read') return;
-                const rect = canvasRef.current.getBoundingClientRect();
-                const x = e.clientX - rect.left;
-                const y = e.clientY - rect.top;
-                selectionStartRef.current = { x, y };
-                setSelection({ x, y, w: 0, h: 0 });
+                if (!pdfDoc) return;
+                setIsSelecting(true);
+                const coords = getRelativeCoords(e);
+                setSelectionStart(coords);
+                setSelectionBox(null);
             };
 
             const handleMouseMove = (e) => {
-                if (!selectionStartRef.current || mode !== 'read') return;
-                const rect = canvasRef.current.getBoundingClientRect();
-                const currentX = e.clientX - rect.left;
-                const currentY = e.clientY - rect.top;
+                if (!isSelecting) return;
+                const coords = getRelativeCoords(e);
                 
-                setSelection({
-                    x: Math.min(selectionStartRef.current.x, currentX),
-                    y: Math.min(selectionStartRef.current.y, currentY),
-                    w: Math.abs(currentX - selectionStartRef.current.x),
-                    h: Math.abs(currentY - selectionStartRef.current.y)
-                });
+                const x = Math.min(selectionStart.x, coords.x);
+                const y = Math.min(selectionStart.y, coords.y);
+                const w = Math.abs(coords.x - selectionStart.x);
+                const h = Math.abs(coords.y - selectionStart.y);
+                
+                setSelectionBox({ x, y, w, h });
             };
 
-            const handleMouseUp = () => {
-                selectionStartRef.current = null;
-            };
+            const handleMouseUp = () => setIsSelecting(false);
 
-            // Vision Capture
-            const handleScan = async () => {
-                if (!selection || selection.w < 20) return;
-                setIsScanning(true);
-                setErrorMsg(null);
+            const scanSelection = async () => {
+                if (!selectionBox || !canvasRef.current) return;
+                if (!apiKey) { setShowSettings(true); return; }
+
+                setIsLoading(true);
+                setLoadingMsg("AI Analyzing Position...");
 
                 try {
-                    // Create a temp canvas to crop the selection
+                    // Crop logic: Map CSS display coordinates to Canvas internal resolution
                     const canvas = canvasRef.current;
-                    // Important: Account for CSS scaling vs Internal resolution
-                    const rect = canvas.getBoundingClientRect();
+                    const rect = containerRef.current.getBoundingClientRect(); // visible size
+                    
                     const scaleX = canvas.width / rect.width;
                     const scaleY = canvas.height / rect.height;
 
-                    const tempCanvas = document.createElement('canvas');
-                    tempCanvas.width = selection.w * scaleX;
-                    tempCanvas.height = selection.h * scaleY;
-                    
-                    const ctx = tempCanvas.getContext('2d');
-                    ctx.drawImage(
-                        canvas,
-                        selection.x * scaleX, selection.y * scaleY, selection.w * scaleX, selection.h * scaleY,
-                        0, 0, tempCanvas.width, tempCanvas.height
-                    );
+                    const cropX = selectionBox.x * scaleX;
+                    const cropY = selectionBox.y * scaleY;
+                    const cropW = selectionBox.w * scaleX;
+                    const cropH = selectionBox.h * scaleY;
 
-                    const base64 = tempCanvas.toDataURL('image/png');
-                    const detectedFen = await GeminiService.analyze(base64, apiKey, modelId);
+                    const tempCanvas = document.createElement('canvas');
+                    tempCanvas.width = cropW;
+                    tempCanvas.height = cropH;
+                    const ctx = tempCanvas.getContext('2d');
                     
-                    // Validate FEN with Chess.js
-                    const chess = new window.Chess();
-                    if (chess.load(detectedFen)) {
-                        setFen(detectedFen);
-                        gameRef.current = chess;
-                        setMode('analyze');
-                        setSelection(null); // Clear selection on success
+                    ctx.drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+                    
+                    const base64Image = tempCanvas.toDataURL('image/jpeg').split(',')[1];
+
+                    // Gemini Call
+                    const payload = {
+                        contents: [{
+                            parts: [
+                                { text: "Analyze this chess diagram. Return ONLY the FEN string. If unsure of the turn, assume 'w'. Do not include markdown." },
+                                { inline_data: { mime_type: "image/jpeg", data: base64Image } }
+                            ]
+                        }]
+                    };
+
+                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    const data = await response.json();
+                    if (data.error) throw new Error(data.error.message);
+                    
+                    let resultText = data.candidates[0].content.parts[0].text.replace(/`/g, '').replace(/\n/g, '').trim();
+                    
+                    if (resultText.split('/').length === 8) {
+                         setFen(resultText);
                     } else {
-                        // Sometimes AI misses the turn 'w', try appending it
-                        if (chess.load(detectedFen + " w - - 0 1")) {
-                            setFen(detectedFen + " w - - 0 1");
-                            gameRef.current = chess;
-                            setMode('analyze');
-                            setSelection(null);
-                        } else {
-                            throw new Error(`Invalid FEN detected: ${detectedFen}`);
-                        }
+                        setErrorMsg("AI returned invalid FEN.");
                     }
 
                 } catch (err) {
-                    setErrorMsg(err.message);
+                    setErrorMsg("Scan failed: " + err.message);
                 } finally {
-                    setIsScanning(false);
+                    setIsLoading(false);
+                    setSelectionBox(null);
                 }
             };
-
-            const onChessBoardMove = (from, to) => {
-                const move = gameRef.current.move({ from, to, promotion: 'q' });
-                if (move) {
-                    setFen(gameRef.current.fen());
-                    return true;
-                }
-                return false;
-            };
-
-            // -- Render Helpers --
-
-            const SettingsModal = () => (
-                <div className="absolute top-16 right-4 z-50 w-80 bg-chess-panel border border-gray-600 rounded-lg shadow-2xl p-4 text-sm">
-                    <h3 className="font-bold mb-3 text-white flex items-center gap-2">
-                        <Icons.Settings className="text-gray-400"/> Settings
-                    </h3>
-                    <div className="mb-3">
-                        <label className="block text-gray-400 text-xs mb-1">API Key (Gemini)</label>
-                        <input 
-                            type="password" 
-                            value={apiKey} 
-                            onChange={(e) => setApiKey(e.target.value)}
-                            placeholder="AIza..."
-                            className="w-full bg-gray-900 border border-gray-700 rounded p-2 text-white focus:border-blue-500 outline-none"
-                        />
-                    </div>
-                    <div className="mb-4">
-                        <label className="block text-gray-400 text-xs mb-1">Model ID</label>
-                        <input 
-                            type="text" 
-                            value={modelId} 
-                            onChange={(e) => setModelId(e.target.value)}
-                            placeholder="gemini-1.5-flash"
-                            className="w-full bg-gray-900 border border-gray-700 rounded p-2 text-white focus:border-blue-500 outline-none"
-                        />
-                        <p className="text-[10px] text-gray-500 mt-1">Try "gemini-1.5-pro" for higher accuracy or previews if available.</p>
-                    </div>
-                    <button 
-                        onClick={saveSettings}
-                        className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 rounded transition-colors"
-                    >
-                        Save
-                    </button>
-                </div>
-            );
 
             return (
-                <div className="h-screen flex flex-col">
-                    {/* TOP BAR */}
-                    <div className="h-16 bg-chess-panel border-b border-gray-700 flex items-center justify-between px-6 z-20 shadow-lg">
+                <div className="flex flex-col h-full">
+                    <header className="bg-gray-800 border-b border-gray-700 p-4 flex justify-between items-center shrink-0">
                         <div className="flex items-center gap-2">
-                            <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center font-black italic">CV</div>
-                            <span className="font-bold text-lg tracking-tight">ChessVision<span className="text-blue-400">.ai</span></span>
+                            <i className="fas fa-chess-knight text-blue-500 text-2xl"></i>
+                            <h1 className="text-xl font-bold tracking-tight">Chess<span className="text-blue-500">Vision</span></h1>
                         </div>
-                        
-                        <div className="flex items-center gap-4">
-                            {mode === 'read' && (
-                                <div className="flex bg-gray-900 rounded-lg p-1 border border-gray-700">
-                                    <button onClick={() => setPageNum(Math.max(1, pageNum-1))} className="p-2 hover:bg-gray-800 rounded text-gray-400 hover:text-white"><Icons.ArrowLeft/></button>
-                                    <span className="flex items-center px-3 font-mono text-sm text-gray-300">Page {pageNum}</span>
-                                    <button onClick={() => setPageNum((p) => p+1)} className="p-2 hover:bg-gray-800 rounded text-gray-400 hover:text-white"><Icons.ArrowRight/></button>
+                        <button onClick={() => setShowSettings(true)} className="text-gray-400 hover:text-white transition">
+                            <i className="fas fa-cog text-xl"></i>
+                        </button>
+                    </header>
+
+                    <div className="flex flex-1 overflow-hidden">
+                        {/* PDF View */}
+                        <div className="flex-1 bg-gray-900 p-4 flex flex-col items-center overflow-auto border-r border-gray-800 relative select-none" onMouseUp={handleMouseUp}>
+                            <div className="w-full max-w-3xl flex justify-between items-center mb-4 sticky top-0 z-20 bg-gray-900/90 backdrop-blur py-2">
+                                <label className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded cursor-pointer text-sm font-medium transition">
+                                    <i className="fas fa-upload mr-2"></i>Open PDF
+                                    <input type="file" accept=".pdf" className="hidden" onChange={handleFileUpload} />
+                                </label>
+                                {pdfDoc && (
+                                    <div className="flex items-center gap-4 bg-gray-800 px-3 py-1 rounded-full border border-gray-700">
+                                        <button onClick={() => setPageNum(p => Math.max(1, p - 1))} className="text-gray-400 hover:text-white"><i className="fas fa-chevron-left"></i></button>
+                                        <span className="text-sm font-mono text-gray-300">Page {pageNum} / {pdfDoc.numPages}</span>
+                                        <button onClick={() => setPageNum(p => Math.min(pdfDoc.numPages, p + 1))} className="text-gray-400 hover:text-white"><i className="fas fa-chevron-right"></i></button>
+                                    </div>
+                                )}
+                            </div>
+
+                            {pdfDoc ? (
+                                <div className="relative group">
+                                    <div ref={containerRef} className="pdf-container cursor-crosshair border border-gray-700" onMouseDown={handleMouseDown} onMouseMove={handleMouseMove}>
+                                        <canvas ref={canvasRef} className="block max-w-full h-auto" />
+                                        {selectionBox && (
+                                            <div className="selection-box flex items-end justify-end p-1" style={{ left: selectionBox.x, top: selectionBox.y, width: selectionBox.w, height: selectionBox.h }}>
+                                                <button onMouseDown={(e) => e.stopPropagation()} onClick={scanSelection} className="bg-blue-600 text-white text-xs font-bold px-2 py-1 rounded shadow-lg hover:bg-blue-500 pointer-events-auto">SCAN</button>
+                                            </div>
+                                        )}
+                                    </div>
+                                    <p className="text-gray-500 text-sm mt-2 text-center opacity-0 group-hover:opacity-100 transition"><i className="fas fa-crop-simple mr-1"></i> Drag to select a diagram</p>
+                                </div>
+                            ) : (
+                                <div className="flex-1 flex flex-col items-center justify-center text-gray-600">
+                                    <i className="fas fa-file-pdf text-6xl mb-4"></i>
+                                    <p>Upload a PDF to get started</p>
                                 </div>
                             )}
+                        </div>
 
-                            <button onClick={() => setShowSettings(!showSettings)} className={`p-2 rounded-full transition-colors ${!apiKey ? 'animate-pulse text-red-400 bg-red-900/20' : 'text-gray-400 hover:text-white'}`}>
-                                <Icons.Settings />
-                            </button>
-                            {mode !== 'upload' && <button onClick={() => setMode('upload')} className="text-sm font-medium text-gray-400 hover:text-white">Close PDF</button>}
+                        {/* Analysis View */}
+                        <div className="w-[400px] bg-gray-800 p-4 flex flex-col border-l border-gray-700 shrink-0 overflow-y-auto">
+                            <h2 className="text-lg font-bold text-gray-200 mb-4 border-b border-gray-700 pb-2">Analysis Board</h2>
+                            <ChessBoard fen={fen} setFen={setFen} onMove={(f) => setFen(f)} engineEval={engineEval} />
+                            
+                            <div className="mt-8 p-4 bg-gray-700/50 rounded text-sm text-gray-400">
+                                <h3 className="font-bold text-gray-300 mb-2">How it works</h3>
+                                <ul className="list-disc pl-4 space-y-1">
+                                    <li>Open a Chess PDF.</li>
+                                    <li>Drag a box over a diagram.</li>
+                                    <li>Click <strong>SCAN</strong>.</li>
+                                    <li>AI converts image to FEN.</li>
+                                    <li>Stockfish evaluates the position.</li>
+                                </ul>
+                            </div>
                         </div>
                     </div>
 
-                    {showSettings && <SettingsModal />}
+                    <SettingsModal isOpen={showSettings} onClose={() => setShowSettings(false)} apiKey={apiKey} setApiKey={setApiKey} modelId={modelId} setModelId={setModelId} />
 
-                    {/* MAIN AREA */}
-                    <div className="flex-1 bg-gray-950 relative overflow-hidden flex justify-center">
-                        
-                        {/* 1. UPLOAD SCREEN */}
-                        {mode === 'upload' && (
-                            <div className="flex flex-col items-center justify-center h-full w-full animate-fade-in">
-                                <div className="bg-chess-panel p-10 rounded-2xl border border-gray-700 shadow-2xl text-center max-w-md w-full">
-                                    <Icons.Upload className="w-16 h-16 text-blue-500 mx-auto mb-6 opacity-80" />
-                                    <h2 className="text-2xl font-bold mb-2">Upload Chess Book</h2>
-                                    <p className="text-gray-400 mb-8 text-sm">Supports standard PDF files. API Key required for analysis.</p>
-                                    <label className="block w-full">
-                                        <div className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-4 rounded-lg cursor-pointer transition-transform hover:scale-105 flex items-center justify-center gap-2">
-                                            <span>Select PDF File</span>
-                                            <input type="file" accept=".pdf" onChange={handleFileUpload} className="hidden" />
-                                        </div>
-                                    </label>
-                                    {!apiKey && <p className="text-xs text-red-400 mt-4">⚠️ Please set your Gemini API Key in settings.</p>}
-                                </div>
-                            </div>
-                        )}
+                    {isLoading && (
+                        <div className="fixed inset-0 bg-black bg-opacity-80 flex flex-col items-center justify-center z-50">
+                            <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-blue-500 mb-4"></div>
+                            <p className="text-blue-400 font-mono animate-pulse">{loadingMsg}</p>
+                        </div>
+                    )}
 
-                        {/* 2. READER CANVAS */}
-                        {(mode === 'read' || mode === 'analyze') && (
-                            <div className="relative w-full h-full overflow-auto bg-gray-900 p-8 flex justify-center">
-                                <div className="relative shadow-2xl">
-                                    <canvas 
-                                        ref={canvasRef}
-                                        onMouseDown={handleMouseDown}
-                                        onMouseMove={handleMouseMove}
-                                        onMouseUp={handleMouseUp}
-                                        className="cursor-crosshair max-w-none bg-white"
-                                    />
-                                    
-                                    {/* SELECTION OVERLAY */}
-                                    {selection && selection.w > 0 && mode === 'read' && (
-                                        <>
-                                            <div 
-                                                className="absolute border-2 border-blue-500 bg-blue-500/10 pointer-events-none z-10"
-                                                style={{ left: selection.x, top: selection.y, width: selection.w, height: selection.h }}
-                                            />
-                                            {/* SCAN BUTTON */}
-                                            <div 
-                                                className="absolute z-20 transform -translate-x-1/2 left-1/2"
-                                                style={{ left: selection.x + selection.w/2, top: selection.y + selection.h + 10 }}
-                                            >
-                                                <button 
-                                                    onClick={handleScan}
-                                                    disabled={isScanning}
-                                                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold py-2 px-6 rounded-full shadow-lg whitespace-nowrap transition-all"
-                                                >
-                                                    {isScanning ? <div className="custom-loader w-4 h-4"/> : <Icons.Scan className="w-4 h-4"/>}
-                                                    {isScanning ? "Analyzing..." : "Scan Position"}
-                                                </button>
-                                            </div>
-                                            {/* CLOSE SELECTION */}
-                                            <button 
-                                                onClick={() => setSelection(null)}
-                                                className="absolute z-20 bg-red-500 text-white rounded-full p-1 shadow-md hover:bg-red-400"
-                                                style={{ left: selection.x + selection.w - 10, top: selection.y - 10 }}
-                                            >
-                                                <Icons.X size={14}/>
-                                            </button>
-                                        </>
-                                    )}
-                                </div>
-                            </div>
-                        )}
-
-                        {/* 3. ANALYSIS OVERLAY */}
-                        {mode === 'analyze' && (
-                            <div className="absolute inset-0 z-40 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
-                                <div className="bg-chess-panel w-full max-w-4xl h-[600px] rounded-2xl border border-gray-600 shadow-2xl flex flex-col md:flex-row overflow-hidden">
-                                    
-                                    {/* Left: Board */}
-                                    <div className="flex-1 bg-gray-800 p-8 flex items-center justify-center">
-                                        <div className="w-full max-w-[450px]">
-                                            <ChessBoard fen={fen} onMove={onChessBoardMove} />
-                                        </div>
-                                    </div>
-
-                                    {/* Right: Engine Panel */}
-                                    <div className="w-full md:w-80 bg-chess-panel border-l border-gray-700 p-6 flex flex-col">
-                                        <div className="flex justify-between items-start mb-6">
-                                            <div>
-                                                <h2 className="text-xl font-bold text-white">Analysis</h2>
-                                                <span className="text-xs text-green-400 font-mono">Stockfish 10 Running</span>
-                                            </div>
-                                            <button onClick={() => setMode('read')} className="text-gray-400 hover:text-white p-1 hover:bg-gray-700 rounded">
-                                                <Icons.X />
-                                            </button>
-                                        </div>
-
-                                        <div className="bg-gray-900 rounded-lg p-4 mb-4 border border-gray-700">
-                                            <div className="text-xs text-gray-500 uppercase tracking-wider font-bold mb-1">Evaluation</div>
-                                            <div className={`text-4xl font-mono font-bold ${evaluation.includes('-') ? 'text-red-400' : 'text-green-400'}`}>
-                                                {evaluation}
-                                            </div>
-                                        </div>
-
-                                        <div className="flex-1">
-                                            <div className="text-xs text-gray-500 uppercase tracking-wider font-bold mb-2">Current FEN</div>
-                                            <textarea 
-                                                readOnly 
-                                                value={fen} 
-                                                className="w-full h-24 bg-black/30 border border-gray-700 rounded p-3 text-xs font-mono text-gray-300 resize-none focus:border-blue-500 outline-none"
-                                            />
-                                        </div>
-
-                                        <div className="mt-4">
-                                            <button 
-                                                onClick={() => {
-                                                    const newGame = new window.Chess();
-                                                    setFen(newGame.fen());
-                                                    gameRef.current = newGame;
-                                                }}
-                                                className="w-full py-3 bg-gray-700 hover:bg-gray-600 rounded text-sm font-bold text-gray-200 transition-colors"
-                                            >
-                                                Reset Board
-                                            </button>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-
-                        {/* ERROR TOAST */}
-                        {errorMsg && (
-                            <div className="absolute bottom-10 left-1/2 transform -translate-x-1/2 bg-red-600 text-white px-6 py-3 rounded-lg shadow-xl z-50 flex items-center gap-3 animate-bounce">
-                                <Icons.X />
-                                <span>{errorMsg}</span>
-                                <button onClick={() => setErrorMsg(null)} className="underline text-xs opacity-80 ml-4">Dismiss</button>
-                            </div>
-                        )}
-
-                    </div>
+                    {errorMsg && (
+                        <div className="fixed bottom-4 left-1/2 transform -translate-x-1/2 bg-red-600 text-white px-6 py-3 rounded shadow-lg z-50 flex items-center gap-3">
+                            <i className="fas fa-exclamation-circle"></i>
+                            <span>{errorMsg}</span>
+                            <button onClick={() => setErrorMsg('')} className="ml-2 hover:text-gray-200"><i className="fas fa-times"></i></button>
+                        </div>
+                    )}
                 </div>
             );
         };
