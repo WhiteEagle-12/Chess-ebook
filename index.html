@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ChessVision.ai - Single File POC</title>
+    <title>ChessVision.ai - Gemini 3 Preview</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -11,7 +11,7 @@
             theme: {
                 extend: {
                     colors: {
-                        chess: { board: '#769656', light: '#eeeed2' }
+                        chess: { board: '#769656', light: '#eeeed2', dark: '#111827' }
                     }
                 }
             }
@@ -30,12 +30,11 @@
     </script>
 
     <style>
-        body { background-color: #111827; color: white; margin: 0; font-family: sans-serif; overflow: hidden; }
-        .custom-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: #1f2937; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #6b7280; }
-        canvas { box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5); }
+        body { background-color: #111827; color: #e5e7eb; margin: 0; font-family: 'Inter', sans-serif; overflow: hidden; }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #1f2937; }
+        ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
+        canvas { box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5); }
     </style>
 </head>
 <body>
@@ -45,400 +44,337 @@
         const { useState, useEffect, useRef } = React;
 
         // --- ICONS ---
-        const Icon = ({ path, className, size = 20, fill = "none" }) => (
-            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill={fill} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-                {path}
-            </svg>
+        const Icon = ({ path, className }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>{path}</svg>
         );
         const Icons = {
-            Upload: (p) => <Icon {...p} path={<><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></>} />,
-            X: (p) => <Icon {...p} path={<><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></>} />,
-            Zap: (p) => <Icon {...p} fill="currentColor" path={<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>} />,
-            Scan: (p) => <Icon {...p} path={<><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/></>} />,
-            Settings: (p) => <Icon {...p} path={<><path d="M12.22 2h-.44a2 2 0 0 1-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.47a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.39a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></>} />,
-            Key: (p) => <Icon {...p} path={<><path d="m21 2-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0 3 3L22 7l-3-3m-3.5 3.5L19 4"/></>} />,
-            ChevronLeft: (p) => <Icon {...p} path={<polyline points="15 18 9 12 15 6"/>} />,
-            ChevronRight: (p) => <Icon {...p} path={<polyline points="9 18 15 12 9 6"/>} />,
-            RefreshCw: (p) => <Icon {...p} path={<><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16l5 5v-5"/></>} />,
-            Cpu: (p) => <Icon {...p} path={<><rect x="4" y="4" width="16" height="16" rx="2" ry="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></>} />,
-            Loader: (p) => <Icon {...p} path={<path d="M21 12a9 9 0 1 1-6.219-8.56" />} />
+            Upload: () => <Icon path={<><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></>} />,
+            X: () => <Icon path={<><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></>} />,
+            Scan: () => <Icon path={<><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/></>} />,
+            Settings: () => <Icon path={<><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></>} />,
+            ArrowRight: () => <Icon path={<line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" />} />,
+            ArrowLeft: () => <Icon path={<line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" />} />,
         };
 
-        // --- PIECE SVG ASSETS ---
-        const PieceSVGs = {
-            w: {
-                p: "https://upload.wikimedia.org/wikipedia/commons/4/45/Chess_plt45.svg",
-                n: "https://upload.wikimedia.org/wikipedia/commons/7/70/Chess_nlt45.svg",
-                b: "https://upload.wikimedia.org/wikipedia/commons/b/b1/Chess_blt45.svg",
-                r: "https://upload.wikimedia.org/wikipedia/commons/7/72/Chess_rlt45.svg",
-                q: "https://upload.wikimedia.org/wikipedia/commons/1/15/Chess_qlt45.svg",
-                k: "https://upload.wikimedia.org/wikipedia/commons/4/42/Chess_klt45.svg",
-            },
-            b: {
-                p: "https://upload.wikimedia.org/wikipedia/commons/c/c7/Chess_pdt45.svg",
-                n: "https://upload.wikimedia.org/wikipedia/commons/e/ef/Chess_ndt45.svg",
-                b: "https://upload.wikimedia.org/wikipedia/commons/9/98/Chess_bdt45.svg",
-                r: "https://upload.wikimedia.org/wikipedia/commons/f/ff/Chess_rdt45.svg",
-                q: "https://upload.wikimedia.org/wikipedia/commons/4/47/Chess_qdt45.svg",
-                k: "https://upload.wikimedia.org/wikipedia/commons/f/f0/Chess_kdt45.svg",
-            }
-        };
+        // --- GEMINI API INTEGRATION ---
+        const analyzeImage = async (base64, apiKey, modelId) => {
+            if (!apiKey) throw new Error("API Key required");
+            
+            // Note: The user specifically requested gemini-3-pro-preview.
+            // If that fails, consider falling back to gemini-1.5-flash manually in settings.
+            const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`;
+            
+            const payload = {
+                contents: [{
+                    parts: [
+                        { text: "Analyze this chess diagram. Output ONLY the FEN string. If unsure of turn, assume white ('w'). Do not include markdown code blocks." },
+                        { inlineData: { mimeType: "image/png", data: base64.split(',')[1] } }
+                    ]
+                }]
+            };
 
-        // --- GEMINI API CALL ---
-        const analyzeImageWithGemini = async (base64Image, apiKey, modelId) => {
-            if (!apiKey) throw new Error("API Key missing");
-            const prompt = `Analyze this chess diagram. Return ONLY the FEN string. If unsure of turn, use 'w'. No explanations.`;
-            
-            // Use user-provided model ID or default
-            const model = modelId || 'gemini-2.5-flash-preview-09-2025';
-            
-            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
+            const res = await fetch(ENDPOINT, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: "image/png", data: base64Image.split(',')[1] } }] }] })
+                body: JSON.stringify(payload)
             });
+
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.error?.message || "Gemini API Error");
+            }
+
+            const data = await res.json();
+            const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (!text) throw new Error("No FEN found in response");
             
-            const data = await response.json();
-            if (data.error) throw new Error(data.error.message);
-            return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim()?.replace(/['"`]/g, '').split('\n')[0];
+            // Clean up response (remove markdown if present)
+            return text.replace(/```/g, '').replace(/^fen\s+/i, '').trim();
         };
 
-        // --- CUSTOM CHESSBOARD COMPONENT ---
-        const SimpleChessBoard = ({ fen, onMove, orientation = 'w' }) => {
+        // --- CHESS BOARD COMPONENT ---
+        const Board = ({ fen, onMove }) => {
             const [board, setBoard] = useState([]);
             const [selected, setSelected] = useState(null);
 
             useEffect(() => {
                 const rows = fen.split(' ')[0].split('/');
-                const newBoard = rows.map(row => {
-                    let expanded = [];
-                    for(let char of row) {
-                        if(isNaN(char)) expanded.push(char);
-                        else expanded.push(...Array(parseInt(char)).fill(null));
+                setBoard(rows.map(r => {
+                    let row = [];
+                    for (let c of r) {
+                        if (/\d/.test(c)) row.push(...Array(parseInt(c)).fill(null));
+                        else row.push(c);
                     }
-                    return expanded;
-                });
-                setBoard(newBoard);
+                    return row;
+                }));
             }, [fen]);
 
-            const handleSquareClick = (r, c) => {
+            const handleClick = (r, c) => {
                 const files = 'abcdefgh';
-                const file = files[c];
-                const rank = 8 - r;
-                const square = `${file}${rank}`;
-
-                if (selected === square) { setSelected(null); return; }
-
-                if (selected && onMove) {
-                    const success = onMove(selected, square);
-                    if (success) { setSelected(null); return; }
+                const sq = `${files[c]}${8-r}`;
+                if (selected === sq) { setSelected(null); return; }
+                if (selected) {
+                    if (onMove(selected, sq)) { setSelected(null); return; }
                 }
+                if (board[r][c]) setSelected(sq);
+            };
 
-                const piece = board[r][c];
-                if (piece) setSelected(square);
-                else setSelected(null);
+            const getPieceUrl = (p) => {
+                if(!p) return null;
+                const c = p === p.toUpperCase() ? 'w' : 'b';
+                const t = p.toLowerCase();
+                const map = {
+                    'p': '[https://upload.wikimedia.org/wikipedia/commons/4/45/Chess_plt45.svg](https://upload.wikimedia.org/wikipedia/commons/4/45/Chess_plt45.svg)',
+                    'r': '[https://upload.wikimedia.org/wikipedia/commons/7/72/Chess_rlt45.svg](https://upload.wikimedia.org/wikipedia/commons/7/72/Chess_rlt45.svg)',
+                    'n': '[https://upload.wikimedia.org/wikipedia/commons/7/70/Chess_nlt45.svg](https://upload.wikimedia.org/wikipedia/commons/7/70/Chess_nlt45.svg)',
+                    'b': '[https://upload.wikimedia.org/wikipedia/commons/b/b1/Chess_blt45.svg](https://upload.wikimedia.org/wikipedia/commons/b/b1/Chess_blt45.svg)',
+                    'q': '[https://upload.wikimedia.org/wikipedia/commons/1/15/Chess_qlt45.svg](https://upload.wikimedia.org/wikipedia/commons/1/15/Chess_qlt45.svg)',
+                    'k': '[https://upload.wikimedia.org/wikipedia/commons/4/42/Chess_klt45.svg](https://upload.wikimedia.org/wikipedia/commons/4/42/Chess_klt45.svg)'
+                };
+                if (c === 'b') {
+                   map['p'] = "[https://upload.wikimedia.org/wikipedia/commons/c/c7/Chess_pdt45.svg](https://upload.wikimedia.org/wikipedia/commons/c/c7/Chess_pdt45.svg)";
+                   map['r'] = "[https://upload.wikimedia.org/wikipedia/commons/f/ff/Chess_rdt45.svg](https://upload.wikimedia.org/wikipedia/commons/f/ff/Chess_rdt45.svg)";
+                   map['n'] = "[https://upload.wikimedia.org/wikipedia/commons/e/ef/Chess_ndt45.svg](https://upload.wikimedia.org/wikipedia/commons/e/ef/Chess_ndt45.svg)";
+                   map['b'] = "[https://upload.wikimedia.org/wikipedia/commons/9/98/Chess_bdt45.svg](https://upload.wikimedia.org/wikipedia/commons/9/98/Chess_bdt45.svg)";
+                   map['q'] = "[https://upload.wikimedia.org/wikipedia/commons/4/47/Chess_qdt45.svg](https://upload.wikimedia.org/wikipedia/commons/4/47/Chess_qdt45.svg)";
+                   map['k'] = "[https://upload.wikimedia.org/wikipedia/commons/f/f0/Chess_kdt45.svg](https://upload.wikimedia.org/wikipedia/commons/f/f0/Chess_kdt45.svg)";
+                }
+                return map[t];
             };
 
             return (
-                <div className="grid grid-rows-8 grid-cols-8 w-full h-full border-2 border-gray-700 select-none">
-                    {board.map((row, r) => 
-                        row.map((piece, c) => {
-                            const isLight = (r + c) % 2 === 0;
-                            const files = 'abcdefgh';
-                            const sqName = `${files[c]}${8-r}`;
-                            const isSelected = selected === sqName;
-                            let pieceImg = null;
-                            if (piece) {
-                                const color = piece === piece.toUpperCase() ? 'w' : 'b';
-                                pieceImg = PieceSVGs[color][piece.toLowerCase()];
-                            }
-                            return (
-                                <div key={`${r}-${c}`} onClick={() => handleSquareClick(r, c)} className={`relative flex items-center justify-center ${isLight ? 'bg-chess-light' : 'bg-chess-board'} ${isSelected ? 'ring-inset ring-4 ring-yellow-400 bg-yellow-200' : ''} cursor-pointer`}>
-                                    {c===0 && <span className={`absolute top-0.5 left-0.5 text-[8px] font-bold ${isLight ? 'text-chess-board' : 'text-chess-light'}`}>{8-r}</span>}
-                                    {r===7 && <span className={`absolute bottom-0 right-1 text-[8px] font-bold ${isLight ? 'text-chess-board' : 'text-chess-light'}`}>{files[c]}</span>}
-                                    {pieceImg && <img src={pieceImg} className="w-[85%] h-[85%] pointer-events-none" />}
-                                </div>
-                            )
-                        })
-                    )}
+                <div className="grid grid-cols-8 border-4 border-gray-700 aspect-square w-full max-w-[400px] mx-auto bg-[#eeeed2]">
+                    {board.map((row, r) => row.map((p, c) => (
+                        <div key={`${r}-${c}`} onClick={() => handleClick(r, c)} 
+                             className={`relative flex items-center justify-center cursor-pointer ${(r+c)%2===1 ? 'bg-[#769656]' : ''} ${selected===`${'abcdefgh'[c]}${8-r}` ? 'ring-4 ring-yellow-400 inset' : ''}`}>
+                            {p && <img src={getPieceUrl(p)} className="w-[85%]" />}
+                            {c===0 && <span className={`absolute top-0.5 left-0.5 text-[10px] font-bold ${(r+c)%2===1?'text-[#eeeed2]':'text-[#769656]'}`}>{8-r}</span>}
+                            {r===7 && <span className={`absolute bottom-0 right-1 text-[10px] font-bold ${(r+c)%2===1?'text-[#eeeed2]':'text-[#769656]'}`}>{'abcdefgh'[c]}</span>}
+                        </div>
+                    )))}
                 </div>
-            )
+            );
         };
 
-        // --- MAIN APP COMPONENT ---
+        // --- MAIN APP ---
         const App = () => {
-            const [pdfDoc, setPdfDoc] = useState(null);
+            const [pdf, setPdf] = useState(null);
             const [pageNum, setPageNum] = useState(1);
             const [scale, setScale] = useState(1.5);
-            const [selection, setSelection] = useState(null);
-            const [appState, setAppState] = useState('upload'); 
-            const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_api_key') || '');
-            const [modelId, setModelId] = useState(localStorage.getItem('gemini_model_id') || 'gemini-2.5-flash-preview-09-2025');
+            const [mode, setMode] = useState('upload'); // upload, read, analyze
+            const [sel, setSel] = useState(null); // {x,y,w,h}
+            const [fen, setFen] = useState("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+            const [evalScore, setEvalScore] = useState("...");
+            const [apiKey, setApiKey] = useState(localStorage.getItem("gemini_key") || "");
+            const [modelId, setModelId] = useState("gemini-3-pro-preview");
             const [showSettings, setShowSettings] = useState(false);
-            const [isProcessing, setIsProcessing] = useState(false);
-            const [fen, setFen] = useState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
-            const [evalScore, setEvalScore] = useState(null);
-            const [bestMove, setBestMove] = useState(null);
+            const [loading, setLoading] = useState(false);
             
             const canvasRef = useRef(null);
-            const renderTaskRef = useRef(null);
-            const startPosRef = useRef(null);
-            const stockfishRef = useRef(null);
+            const startRef = useRef(null);
             const gameRef = useRef(new window.Chess());
+            const engineRef = useRef(null);
 
-            const saveSettings = (key, model) => {
-                setApiKey(key);
-                setModelId(model);
-                localStorage.setItem('gemini_api_key', key);
-                localStorage.setItem('gemini_model_id', model);
-            };
-
-            const handleFileUpload = (e) => {
-                const file = e.target.files[0];
-                if (!file) return;
-                const reader = new FileReader();
-                reader.onload = async function() {
-                    const typedarray = new Uint8Array(this.result);
-                    try {
-                        const pdf = await window.pdfjsLib.getDocument(typedarray).promise;
-                        setPdfDoc(pdf);
-                        setAppState('reader');
-                    } catch(err) { alert("Invalid PDF"); }
-                };
-                reader.readAsArrayBuffer(file);
-            };
-
+            // Init Stockfish
             useEffect(() => {
-                if(!pdfDoc || !canvasRef.current) return;
-                const renderPage = async () => {
-                    const page = await pdfDoc.getPage(pageNum);
-                    const viewport = page.getViewport({ scale });
-                    const canvas = canvasRef.current;
-                    const ctx = canvas.getContext('2d');
-                    canvas.height = viewport.height;
-                    canvas.width = viewport.width;
-                    if(renderTaskRef.current) renderTaskRef.current.cancel();
-                    const renderContext = { canvasContext: ctx, viewport };
-                    renderTaskRef.current = page.render(renderContext);
-                };
-                renderPage();
-            }, [pdfDoc, pageNum, scale]);
-
-            const handleMouseDown = (e) => {
-                const rect = canvasRef.current.getBoundingClientRect();
-                startPosRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-                setSelection({ x: startPosRef.current.x, y: startPosRef.current.y, w: 0, h: 0 });
-            };
-            const handleMouseMove = (e) => {
-                if(!selection || selection.w === null) return;
-                if(e.buttons !== 1) return;
-                const rect = canvasRef.current.getBoundingClientRect();
-                const currX = e.clientX - rect.left;
-                const currY = e.clientY - rect.top;
-                setSelection({
-                    x: Math.min(startPosRef.current.x, currX),
-                    y: Math.min(startPosRef.current.y, currY),
-                    w: Math.abs(currX - startPosRef.current.x),
-                    h: Math.abs(currY - startPosRef.current.y)
-                });
-            };
-            const handleMouseUp = () => { if(selection && selection.w < 10) setSelection(null); };
-            const handleDoubleClick = (e) => {
-                const rect = canvasRef.current.getBoundingClientRect();
-                const x = e.clientX - rect.left;
-                const y = e.clientY - rect.top;
-                setSelection({ x: x - 150, y: y - 150, w: 300, h: 300 });
-            };
-
-            const handleCapture = async (e) => {
-                if(e) e.stopPropagation();
-                if(!selection) return;
-                setIsProcessing(true);
-                
-                // --- CRITICAL FIX: CANVAS SCALING MATH ---
-                const canvas = canvasRef.current;
-                const rect = canvas.getBoundingClientRect();
-                const scaleX = canvas.width / rect.width;
-                const scaleY = canvas.height / rect.height;
-
-                const tempCanvas = document.createElement('canvas');
-                tempCanvas.width = selection.w * scaleX;
-                tempCanvas.height = selection.h * scaleY;
-                const ctx = tempCanvas.getContext('2d');
-                
-                ctx.drawImage(
-                    canvas, 
-                    selection.x * scaleX, selection.y * scaleY, selection.w * scaleX, selection.h * scaleY, // Source coords (Internal)
-                    0, 0, tempCanvas.width, tempCanvas.height // Dest coords
-                );
-                
-                const base64 = tempCanvas.toDataURL('image/png');
-
-                if(apiKey) {
-                    try {
-                        const detectedFen = await analyzeImageWithGemini(base64, apiKey, modelId);
-                        if(detectedFen) {
-                            setFen(detectedFen);
-                            gameRef.current = new window.Chess(detectedFen);
-                            setAppState('analyzer');
-                        } else alert("AI couldn't see a board.");
-                    } catch(e) { alert("AI Error: " + e.message); }
-                } else {
-                    console.log("No API Key, entering demo mode");
-                    setAppState('analyzer');
-                }
-                setIsProcessing(false);
-                setSelection(null);
-            };
-
-            useEffect(() => {
-                let worker = null;
                 const initSF = async () => {
-                    const res = await fetch('https://cdnjs.cloudflare.com/ajax/libs/stockfish.js/10.0.0/stockfish.js');
-                    const blob = await res.blob();
-                    const url = URL.createObjectURL(blob);
-                    worker = new Worker(url);
-                    stockfishRef.current = worker;
+                    const blob = await (await fetch('[https://cdnjs.cloudflare.com/ajax/libs/stockfish.js/10.0.0/stockfish.js')).blob](https://cdnjs.cloudflare.com/ajax/libs/stockfish.js/10.0.0/stockfish.js')).blob)();
+                    const worker = new Worker(URL.createObjectURL(blob));
+                    engineRef.current = worker;
                     worker.onmessage = (e) => {
-                        const line = e.data;
-                        if(line.includes('score cp')) {
-                            const sc = line.match(/score cp (-?\d+)/);
+                        if(e.data.includes('score cp')) {
+                            const sc = e.data.match(/score cp (-?\d+)/);
                             if(sc) setEvalScore((parseInt(sc[1])/100).toFixed(2));
+                        } else if (e.data.includes('score mate')) {
+                             setEvalScore('#' + e.data.match(/score mate (-?\d+)/)[1]);
                         }
-                        if(line.startsWith('bestmove')) setBestMove(line.split(' ')[1]);
                     };
                 };
                 initSF();
-                return () => worker?.terminate();
+                return () => engineRef.current?.terminate();
             }, []);
 
-            const runAnalysis = (currFen) => {
-                if(!stockfishRef.current) return;
-                setEvalScore('...');
-                setBestMove(null);
-                stockfishRef.current.postMessage('uci');
-                stockfishRef.current.postMessage(`position fen ${currFen}`);
-                stockfishRef.current.postMessage('go depth 15');
+            // Analyze on FEN change
+            useEffect(() => {
+                if (mode === 'analyze' && engineRef.current) {
+                    engineRef.current.postMessage('uci');
+                    engineRef.current.postMessage(`position fen ${fen}`);
+                    engineRef.current.postMessage('go depth 15');
+                }
+            }, [fen, mode]);
+
+            // PDF Rendering
+            useEffect(() => {
+                if (!pdf || !canvasRef.current) return;
+                pdf.getPage(pageNum).then(page => {
+                    const viewport = page.getViewport({ scale });
+                    const cvs = canvasRef.current;
+                    cvs.width = viewport.width;
+                    cvs.height = viewport.height;
+                    page.render({ canvasContext: cvs.getContext('2d'), viewport });
+                });
+            }, [pdf, pageNum, scale]);
+
+            const handleFile = (e) => {
+                const fr = new FileReader();
+                fr.onload = (ev) => window.pdfjsLib.getDocument(new Uint8Array(ev.target.result)).promise.then(p => {
+                    setPdf(p);
+                    setMode('read');
+                });
+                fr.readAsArrayBuffer(e.target.files[0]);
             };
 
-            useEffect(() => {
-                if(appState === 'analyzer') runAnalysis(fen);
-            }, [appState, fen]);
+            // Selection Logic
+            const handleDown = (e) => {
+                const rect = canvasRef.current.getBoundingClientRect();
+                startRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+                setSel({ x: startRef.current.x, y: startRef.current.y, w:0, h:0 });
+            };
+            const handleMove = (e) => {
+                if (!startRef.current) return;
+                const rect = canvasRef.current.getBoundingClientRect();
+                const cx = e.clientX - rect.left;
+                const cy = e.clientY - rect.top;
+                setSel({
+                    x: Math.min(startRef.current.x, cx),
+                    y: Math.min(startRef.current.y, cy),
+                    w: Math.abs(cx - startRef.current.x),
+                    h: Math.abs(cy - startRef.current.y)
+                });
+            };
+            const handleUp = () => startRef.current = null;
+
+            // Capture & Send
+            const capture = async () => {
+                if (!sel || sel.w < 10) return;
+                setLoading(true);
+                try {
+                    const cvs = canvasRef.current;
+                    const tmp = document.createElement('canvas');
+                    // We must account for CSS scaling vs Internal resolution
+                    const rect = cvs.getBoundingClientRect();
+                    const rX = cvs.width / rect.width;
+                    const rY = cvs.height / rect.height;
+
+                    tmp.width = sel.w * rX;
+                    tmp.height = sel.h * rY;
+                    tmp.getContext('2d').drawImage(cvs, sel.x*rX, sel.y*rY, sel.w*rX, sel.h*rY, 0, 0, tmp.width, tmp.height);
+                    
+                    const base64 = tmp.toDataURL('image/png');
+                    const newFen = await analyzeImage(base64, apiKey, modelId);
+                    
+                    if (new window.Chess(newFen)) { // Validate FEN
+                        setFen(newFen);
+                        gameRef.current = new window.Chess(newFen);
+                        setMode('analyze');
+                    } else {
+                        alert("Invalid FEN returned by AI");
+                    }
+                } catch (e) {
+                    alert(e.message);
+                }
+                setLoading(false);
+                setSel(null);
+            };
 
             const onBoardMove = (from, to) => {
-                const game = gameRef.current;
-                const move = game.move({ from, to, promotion: 'q' });
-                if(move) {
-                    const newFen = game.fen();
-                    setFen(newFen);
-                    runAnalysis(newFen);
-                    return true;
-                }
-                return false;
+                const move = gameRef.current.move({ from, to, promotion: 'q' });
+                if (move) setFen(gameRef.current.fen());
+                return !!move;
             };
 
             return (
-                <div className="flex flex-col h-screen bg-gray-900 text-white font-sans overflow-hidden">
-                    <div className="h-14 bg-gray-800 border-b border-gray-700 flex items-center justify-between px-4 z-20 shrink-0">
-                        <div className="flex items-center gap-2">
-                            <Icons.Zap className="text-yellow-400" />
-                            <span className="font-bold tracking-wider hidden sm:inline">ChessVision POC</span>
-                        </div>
-                        {appState === 'reader' && (
-                            <div className="flex items-center gap-2 bg-gray-700 rounded-lg p-1">
-                                <button onClick={() => setPageNum(Math.max(1, pageNum-1))} className="p-1 hover:bg-gray-600 rounded"><Icons.ChevronLeft/></button>
-                                <span className="mx-2 text-xs font-mono">P. {pageNum}</span>
-                                <button onClick={() => setPageNum(Math.min(pdfDoc?.numPages||1, pageNum+1))} className="p-1 hover:bg-gray-600 rounded"><Icons.ChevronRight/></button>
-                            </div>
-                        )}
-                        <div className="flex items-center gap-2">
-                            <button onClick={() => setShowSettings(!showSettings)} className={`p-2 rounded-full ${apiKey ? 'text-green-400' : 'text-gray-400'} hover:bg-gray-700`}><Icons.Settings/></button>
-                            {appState !== 'upload' && <button onClick={() => setAppState('upload')} className="text-xs border border-gray-600 px-3 py-1.5 rounded">Close</button>}
+                <div className="flex flex-col h-screen overflow-hidden bg-gray-900 text-white">
+                    {/* Header */}
+                    <div className="flex justify-between items-center p-4 bg-gray-800 border-b border-gray-700">
+                        <h1 className="font-bold flex items-center gap-2"><Icons.Scan /> ChessVision</h1>
+                        <div className="flex gap-2">
+                             <button onClick={() => setShowSettings(!showSettings)} className="p-2 hover:bg-gray-700 rounded-full text-gray-400"><Icons.Settings /></button>
+                             {mode !== 'upload' && <button onClick={() => setMode('upload')} className="text-xs border px-2 py-1 rounded">Reset</button>}
                         </div>
                     </div>
 
+                    {/* Settings Dropdown */}
                     {showSettings && (
-                        <div className="absolute top-14 right-0 w-80 bg-gray-800 border-l border-b border-gray-700 p-4 z-50 shadow-xl">
-                            <label className="text-xs font-bold text-gray-400 mb-1 block">GEMINI API KEY</label>
-                            <input type="password" value={apiKey} onChange={(e) => saveSettings(e.target.value, modelId)} placeholder="AIza..." className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1 text-sm text-white mb-3"/>
-                            
-                            <label className="text-xs font-bold text-gray-400 mb-1 block">MODEL ID</label>
-                            <input type="text" value={modelId} onChange={(e) => saveSettings(apiKey, e.target.value)} placeholder="gemini-2.5-flash-preview-09-2025" className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1 text-sm text-white"/>
-                            <p className="text-[10px] text-gray-500 mt-2">Default: gemini-2.5-flash-preview-09-2025.</p>
+                        <div className="absolute top-16 right-4 z-50 bg-gray-800 p-4 border border-gray-600 rounded shadow-xl w-72">
+                            <label className="block text-xs mb-1">API Key</label>
+                            <input type="password" value={apiKey} onChange={e => {setApiKey(e.target.value); localStorage.setItem("gemini_key", e.target.value)}} className="w-full bg-gray-900 border border-gray-600 rounded p-1 text-sm mb-3"/>
+                            <label className="block text-xs mb-1">Model ID</label>
+                            <input type="text" value={modelId} onChange={e => setModelId(e.target.value)} className="w-full bg-gray-900 border border-gray-600 rounded p-1 text-sm"/>
                         </div>
                     )}
 
-                    <div className="flex-1 relative overflow-hidden flex justify-center bg-gray-950">
-                        {appState === 'upload' && (
-                            <div className="flex flex-col items-center justify-center h-full p-6">
-                                <div className="bg-gray-800 p-8 rounded-2xl border border-gray-700 text-center max-w-md w-full">
-                                    <div className="w-16 h-16 bg-blue-500/10 rounded-full flex items-center justify-center mx-auto mb-4">
-                                        <Icons.Upload className="text-blue-400" size={32} />
-                                    </div>
-                                    <h2 className="text-xl font-bold mb-2">Upload Chess PDF</h2>
-                                    <label className="block w-full cursor-pointer bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-lg font-bold text-sm mt-4">
-                                        Select PDF File
-                                        <input type="file" accept=".pdf" onChange={handleFileUpload} className="hidden" />
-                                    </label>
-                                    {!apiKey && <p className="text-xs text-yellow-500 mt-4 bg-yellow-900/20 p-2 rounded">⚠️ API Key required for Vision</p>}
-                                </div>
+                    {/* Content */}
+                    <div className="flex-1 relative overflow-hidden bg-gray-950 flex justify-center">
+                        {mode === 'upload' && (
+                            <div className="flex items-center justify-center h-full">
+                                <label className="cursor-pointer bg-blue-600 hover:bg-blue-500 px-6 py-3 rounded-lg font-bold flex flex-col items-center">
+                                    <Icons.Upload />
+                                    <span className="mt-2">Upload PDF</span>
+                                    <input type="file" accept=".pdf" className="hidden" onChange={handleFile} />
+                                </label>
                             </div>
                         )}
 
-                        {(appState === 'reader' || appState === 'analyzer') && (
-                            <div className="relative w-full h-full overflow-auto flex justify-center p-4 bg-gray-900 custom-scrollbar">
-                                <div className="relative shadow-2xl origin-top">
+                        {(mode === 'read' || mode === 'analyze') && (
+                            <div className="relative w-full overflow-auto custom-scrollbar flex justify-center p-8">
+                                <div className="relative shadow-2xl">
                                     <canvas 
-                                        ref={canvasRef} 
-                                        onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onDoubleClick={handleDoubleClick}
-                                        className="cursor-crosshair bg-white min-h-[800px]"
+                                        ref={canvasRef}
+                                        className="cursor-crosshair bg-white"
+                                        onMouseDown={handleDown}
+                                        onMouseMove={handleMove}
+                                        onMouseUp={handleUp}
                                     />
-                                    {selection && (
+                                    {sel && sel.w > 0 && (
                                         <>
-                                            <div className="absolute border-4 border-blue-500 shadow-[0_0_0_9999px_rgba(0,0,0,0.5)]" style={{left: selection.x, top: selection.y, width: selection.w, height: selection.h}}></div>
-                                            <div className="absolute z-50 flex justify-center" style={{left: selection.x, top: selection.y + selection.h + 10, width: selection.w}}>
-                                                <button onClick={handleCapture} disabled={isProcessing} className="flex items-center gap-2 bg-blue-600 text-white px-6 py-2 rounded-full shadow-xl font-bold text-sm">
-                                                    {isProcessing ? <Icons.Loader className="animate-spin"/> : <Icons.Scan/>} {isProcessing ? "Reading..." : "Scan"}
-                                                </button>
-                                            </div>
-                                            <button onClick={()=>setSelection(null)} className="absolute -top-3 -right-3 bg-red-500 text-white rounded-full p-1 z-50" style={{left: selection.x+selection.w-10, top: selection.y-10}}><Icons.X size={14}/></button>
+                                            <div style={{left:sel.x, top:sel.y, width:sel.w, height:sel.h}} className="absolute border-2 border-blue-500 bg-blue-500/20 pointer-events-none" />
+                                            <button onClick={capture} disabled={loading} className="absolute bg-blue-600 text-white text-xs font-bold px-3 py-1 rounded shadow-lg transform -translate-x-1/2" style={{left:sel.x + sel.w/2, top: sel.y + sel.h + 10}}>
+                                                {loading ? "Thinking..." : "Scan Position"}
+                                            </button>
                                         </>
                                     )}
                                 </div>
                             </div>
                         )}
 
-                        {appState === 'analyzer' && (
-                            <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-                                <div className="bg-gray-900 w-full max-w-4xl h-[600px] rounded-2xl shadow-2xl border border-gray-700 flex flex-col md:flex-row overflow-hidden">
-                                    <div className="flex-1 bg-gray-800 flex items-center justify-center p-4">
-                                        <div className="w-[450px] h-[450px]">
-                                            <SimpleChessBoard fen={fen} onMove={onBoardMove} />
-                                        </div>
+                        {mode === 'analyze' && (
+                            <div className="absolute inset-0 bg-black/80 backdrop-blur-sm z-40 flex items-center justify-center p-4">
+                                <div className="bg-gray-800 rounded-xl overflow-hidden shadow-2xl max-w-4xl w-full flex flex-col md:flex-row">
+                                    <div className="p-6 flex justify-center bg-gray-800">
+                                        <Board fen={fen} onMove={onBoardMove} />
                                     </div>
-                                    <div className="w-full md:w-80 bg-gray-900 border-l border-gray-800 flex flex-col p-4">
-                                        <div className="flex justify-between items-center mb-6">
-                                            <h3 className="font-bold text-gray-200 flex items-center gap-2"><Icons.Cpu className="text-green-500"/> Stockfish</h3>
-                                            <button onClick={()=>setAppState('reader')} className="p-2 hover:bg-gray-800 rounded-full text-gray-400"><Icons.X/></button>
+                                    <div className="flex-1 p-6 bg-gray-900 border-l border-gray-700">
+                                        <div className="flex justify-between mb-4">
+                                            <h2 className="text-xl font-bold">Analysis</h2>
+                                            <button onClick={() => setMode('read')} className="text-gray-400 hover:text-white"><Icons.X /></button>
                                         </div>
-                                        <div className="bg-gray-800 p-4 rounded mb-4">
-                                            <div className="text-xs text-gray-500 uppercase font-bold">Eval</div>
-                                            <div className={`text-3xl font-mono font-bold ${evalScore>0?'text-green-400':'text-gray-300'}`}>{evalScore||'0.00'}</div>
-                                            {bestMove && <div className="text-xl font-mono text-yellow-400 mt-2">Best: {bestMove}</div>}
+                                        <div className="mb-4">
+                                            <div className="text-sm text-gray-500 uppercase">Evaluation</div>
+                                            <div className={`text-4xl font-mono ${evalScore > 0 ? 'text-green-400' : 'text-red-400'}`}>{evalScore}</div>
                                         </div>
-                                        <textarea className="w-full h-24 bg-black/30 border border-gray-700 rounded p-2 text-xs text-gray-400 font-mono" value={fen} readOnly/>
-                                        <button onClick={()=>{ gameRef.current=new window.Chess(); setFen(gameRef.current.fen()); }} className="mt-4 w-full bg-gray-800 hover:bg-gray-700 py-3 rounded text-sm flex justify-center gap-2"><Icons.RefreshCw/> Reset</button>
+                                        <div className="mb-4">
+                                            <div className="text-sm text-gray-500 uppercase">FEN</div>
+                                            <input className="w-full bg-black/30 border border-gray-700 rounded p-2 text-xs font-mono text-gray-400" value={fen} readOnly />
+                                        </div>
                                     </div>
                                 </div>
                             </div>
+                        )}
+
+                        {mode === 'read' && (
+                           <div className="absolute bottom-6 flex gap-4 bg-gray-800 p-2 rounded-lg shadow-xl z-10">
+                                <button onClick={() => setPageNum(Math.max(1, pageNum-1))} className="p-2 hover:bg-gray-700 rounded"><Icons.ArrowLeft/></button>
+                                <span className="font-mono pt-2">Page {pageNum}</span>
+                                <button onClick={() => setPageNum(pageNum+1)} className="p-2 hover:bg-gray-700 rounded"><Icons.ArrowRight/></button>
+                           </div>
                         )}
                     </div>
                 </div>
             );
         };
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
     </script>
 </body>
 </html>
