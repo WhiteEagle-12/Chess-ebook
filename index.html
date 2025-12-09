@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ChessVision.ai - Single File POC</title>
     
-    <!-- 1. STYLING (Tailwind CSS) -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -19,16 +18,13 @@
         }
     </script>
 
-    <!-- 2. CORE LIBRARIES (React, ReactDOM, Babel) -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-    <!-- 3. DOMAIN LIBRARIES (Chess.js, PDF.js) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
     
-    <!-- PDF Worker Setup -->
     <script>
         window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
     </script>
@@ -45,7 +41,6 @@
 <body>
     <div id="root"></div>
 
-    <!-- MAIN APPLICATION CODE -->
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
 
@@ -90,12 +85,14 @@
         };
 
         // --- GEMINI API CALL ---
-        const analyzeImageWithGemini = async (base64Image, apiKey) => {
+        const analyzeImageWithGemini = async (base64Image, apiKey, modelId) => {
             if (!apiKey) throw new Error("API Key missing");
             const prompt = `Analyze this chess diagram. Return ONLY the FEN string. If unsure of turn, use 'w'. No explanations.`;
             
-            // UPDATED MODEL NAME to 'gemini-2.5-flash-preview-09-2025'
-            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+            // Use user-provided model ID or default
+            const model = modelId || 'gemini-2.5-flash-preview-09-2025';
+            
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: "image/png", data: base64Image.split(',')[1] } }] }] })
@@ -106,12 +103,11 @@
             return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim()?.replace(/['"`]/g, '').split('\n')[0];
         };
 
-        // --- CUSTOM CHESSBOARD COMPONENT (No external dep) ---
+        // --- CUSTOM CHESSBOARD COMPONENT ---
         const SimpleChessBoard = ({ fen, onMove, orientation = 'w' }) => {
             const [board, setBoard] = useState([]);
             const [selected, setSelected] = useState(null);
 
-            // Parse FEN to 8x8 grid
             useEffect(() => {
                 const rows = fen.split(' ')[0].split('/');
                 const newBoard = rows.map(row => {
@@ -131,22 +127,13 @@
                 const rank = 8 - r;
                 const square = `${file}${rank}`;
 
-                // If clicking selected square, deselect
-                if (selected === square) {
-                    setSelected(null);
-                    return;
-                }
+                if (selected === square) { setSelected(null); return; }
 
-                // Attempt move
                 if (selected && onMove) {
                     const success = onMove(selected, square);
-                    if (success) {
-                        setSelected(null);
-                        return;
-                    }
+                    if (success) { setSelected(null); return; }
                 }
 
-                // Select new square if piece exists
                 const piece = board[r][c];
                 if (piece) setSelected(square);
                 else setSelected(null);
@@ -160,27 +147,15 @@
                             const files = 'abcdefgh';
                             const sqName = `${files[c]}${8-r}`;
                             const isSelected = selected === sqName;
-                            
-                            // Determine piece image
                             let pieceImg = null;
                             if (piece) {
                                 const color = piece === piece.toUpperCase() ? 'w' : 'b';
                                 pieceImg = PieceSVGs[color][piece.toLowerCase()];
                             }
-
                             return (
-                                <div 
-                                    key={`${r}-${c}`}
-                                    onClick={() => handleSquareClick(r, c)}
-                                    className={`relative flex items-center justify-center 
-                                        ${isLight ? 'bg-chess-light' : 'bg-chess-board'}
-                                        ${isSelected ? 'ring-inset ring-4 ring-yellow-400 bg-yellow-200' : ''}
-                                        cursor-pointer`}
-                                >
-                                    {/* Coordinates */}
+                                <div key={`${r}-${c}`} onClick={() => handleSquareClick(r, c)} className={`relative flex items-center justify-center ${isLight ? 'bg-chess-light' : 'bg-chess-board'} ${isSelected ? 'ring-inset ring-4 ring-yellow-400 bg-yellow-200' : ''} cursor-pointer`}>
                                     {c===0 && <span className={`absolute top-0.5 left-0.5 text-[8px] font-bold ${isLight ? 'text-chess-board' : 'text-chess-light'}`}>{8-r}</span>}
                                     {r===7 && <span className={`absolute bottom-0 right-1 text-[8px] font-bold ${isLight ? 'text-chess-board' : 'text-chess-light'}`}>{files[c]}</span>}
-                                    
                                     {pieceImg && <img src={pieceImg} className="w-[85%] h-[85%] pointer-events-none" />}
                                 </div>
                             )
@@ -192,27 +167,32 @@
 
         // --- MAIN APP COMPONENT ---
         const App = () => {
-            // State
             const [pdfDoc, setPdfDoc] = useState(null);
             const [pageNum, setPageNum] = useState(1);
             const [scale, setScale] = useState(1.5);
             const [selection, setSelection] = useState(null);
             const [appState, setAppState] = useState('upload'); 
-            const [apiKey, setApiKey] = useState('');
+            const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_api_key') || '');
+            const [modelId, setModelId] = useState(localStorage.getItem('gemini_model_id') || 'gemini-2.5-flash-preview-09-2025');
             const [showSettings, setShowSettings] = useState(false);
             const [isProcessing, setIsProcessing] = useState(false);
             const [fen, setFen] = useState('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
             const [evalScore, setEvalScore] = useState(null);
             const [bestMove, setBestMove] = useState(null);
             
-            // Refs
             const canvasRef = useRef(null);
             const renderTaskRef = useRef(null);
             const startPosRef = useRef(null);
             const stockfishRef = useRef(null);
             const gameRef = useRef(new window.Chess());
 
-            // 1. PDF HANDLING
+            const saveSettings = (key, model) => {
+                setApiKey(key);
+                setModelId(model);
+                localStorage.setItem('gemini_api_key', key);
+                localStorage.setItem('gemini_model_id', model);
+            };
+
             const handleFileUpload = (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
@@ -244,14 +224,13 @@
                 renderPage();
             }, [pdfDoc, pageNum, scale]);
 
-            // 2. SELECTION LOGIC
             const handleMouseDown = (e) => {
                 const rect = canvasRef.current.getBoundingClientRect();
                 startPosRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
                 setSelection({ x: startPosRef.current.x, y: startPosRef.current.y, w: 0, h: 0 });
             };
             const handleMouseMove = (e) => {
-                if(!selection || selection.w === null) return; // Only if dragging
+                if(!selection || selection.w === null) return;
                 if(e.buttons !== 1) return;
                 const rect = canvasRef.current.getBoundingClientRect();
                 const currX = e.clientX - rect.left;
@@ -263,7 +242,7 @@
                     h: Math.abs(currY - startPosRef.current.y)
                 });
             };
-            const handleMouseUp = () => { if(selection && selection.w < 10) setSelection(null); }; // clear small selections
+            const handleMouseUp = () => { if(selection && selection.w < 10) setSelection(null); };
             const handleDoubleClick = (e) => {
                 const rect = canvasRef.current.getBoundingClientRect();
                 const x = e.clientX - rect.left;
@@ -271,23 +250,33 @@
                 setSelection({ x: x - 150, y: y - 150, w: 300, h: 300 });
             };
 
-            // 3. SCAN LOGIC
             const handleCapture = async (e) => {
-                if (e) e.stopPropagation();
+                if(e) e.stopPropagation();
                 if(!selection) return;
                 setIsProcessing(true);
                 
-                // Crop
+                // --- CRITICAL FIX: CANVAS SCALING MATH ---
+                const canvas = canvasRef.current;
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = canvas.width / rect.width;
+                const scaleY = canvas.height / rect.height;
+
                 const tempCanvas = document.createElement('canvas');
-                tempCanvas.width = selection.w;
-                tempCanvas.height = selection.h;
+                tempCanvas.width = selection.w * scaleX;
+                tempCanvas.height = selection.h * scaleY;
                 const ctx = tempCanvas.getContext('2d');
-                ctx.drawImage(canvasRef.current, selection.x, selection.y, selection.w, selection.h, 0, 0, selection.w, selection.h);
+                
+                ctx.drawImage(
+                    canvas, 
+                    selection.x * scaleX, selection.y * scaleY, selection.w * scaleX, selection.h * scaleY, // Source coords (Internal)
+                    0, 0, tempCanvas.width, tempCanvas.height // Dest coords
+                );
+                
                 const base64 = tempCanvas.toDataURL('image/png');
 
                 if(apiKey) {
                     try {
-                        const detectedFen = await analyzeImageWithGemini(base64, apiKey);
+                        const detectedFen = await analyzeImageWithGemini(base64, apiKey, modelId);
                         if(detectedFen) {
                             setFen(detectedFen);
                             gameRef.current = new window.Chess(detectedFen);
@@ -302,7 +291,6 @@
                 setSelection(null);
             };
 
-            // 4. STOCKFISH ENGINE
             useEffect(() => {
                 let worker = null;
                 const initSF = async () => {
@@ -333,7 +321,6 @@
                 stockfishRef.current.postMessage('go depth 15');
             };
 
-            // Effect: Run analysis when entering analyzer mode
             useEffect(() => {
                 if(appState === 'analyzer') runAnalysis(fen);
             }, [appState, fen]);
@@ -350,10 +337,8 @@
                 return false;
             };
 
-            // --- RENDER ---
             return (
                 <div className="flex flex-col h-screen bg-gray-900 text-white font-sans overflow-hidden">
-                    {/* Header */}
                     <div className="h-14 bg-gray-800 border-b border-gray-700 flex items-center justify-between px-4 z-20 shrink-0">
                         <div className="flex items-center gap-2">
                             <Icons.Zap className="text-yellow-400" />
@@ -372,19 +357,18 @@
                         </div>
                     </div>
 
-                    {/* Settings Dropdown */}
                     {showSettings && (
                         <div className="absolute top-14 right-0 w-80 bg-gray-800 border-l border-b border-gray-700 p-4 z-50 shadow-xl">
-                            <label className="text-xs font-bold text-gray-400 mb-2 block">GOOGLE GEMINI API KEY</label>
-                            <input type="password" value={apiKey} onChange={e=>setApiKey(e.target.value)} placeholder="AIza..." className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1 text-sm text-white"/>
-                            <p className="text-[10px] text-gray-500 mt-2">Get key at aistudio.google.com</p>
+                            <label className="text-xs font-bold text-gray-400 mb-1 block">GEMINI API KEY</label>
+                            <input type="password" value={apiKey} onChange={(e) => saveSettings(e.target.value, modelId)} placeholder="AIza..." className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1 text-sm text-white mb-3"/>
+                            
+                            <label className="text-xs font-bold text-gray-400 mb-1 block">MODEL ID</label>
+                            <input type="text" value={modelId} onChange={(e) => saveSettings(apiKey, e.target.value)} placeholder="gemini-2.5-flash-preview-09-2025" className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1 text-sm text-white"/>
+                            <p className="text-[10px] text-gray-500 mt-2">Default: gemini-2.5-flash-preview-09-2025.</p>
                         </div>
                     )}
 
-                    {/* Main Content */}
                     <div className="flex-1 relative overflow-hidden flex justify-center bg-gray-950">
-                        
-                        {/* 1. UPLOAD */}
                         {appState === 'upload' && (
                             <div className="flex flex-col items-center justify-center h-full p-6">
                                 <div className="bg-gray-800 p-8 rounded-2xl border border-gray-700 text-center max-w-md w-full">
@@ -401,7 +385,6 @@
                             </div>
                         )}
 
-                        {/* 2. READER */}
                         {(appState === 'reader' || appState === 'analyzer') && (
                             <div className="relative w-full h-full overflow-auto flex justify-center p-4 bg-gray-900 custom-scrollbar">
                                 <div className="relative shadow-2xl origin-top">
@@ -410,7 +393,6 @@
                                         onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onDoubleClick={handleDoubleClick}
                                         className="cursor-crosshair bg-white min-h-[800px]"
                                     />
-                                    {/* Selection Box */}
                                     {selection && (
                                         <>
                                             <div className="absolute border-4 border-blue-500 shadow-[0_0_0_9999px_rgba(0,0,0,0.5)]" style={{left: selection.x, top: selection.y, width: selection.w, height: selection.h}}></div>
@@ -426,17 +408,14 @@
                             </div>
                         )}
 
-                        {/* 3. ANALYZER MODAL */}
                         {appState === 'analyzer' && (
                             <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
                                 <div className="bg-gray-900 w-full max-w-4xl h-[600px] rounded-2xl shadow-2xl border border-gray-700 flex flex-col md:flex-row overflow-hidden">
-                                    {/* Board */}
                                     <div className="flex-1 bg-gray-800 flex items-center justify-center p-4">
                                         <div className="w-[450px] h-[450px]">
                                             <SimpleChessBoard fen={fen} onMove={onBoardMove} />
                                         </div>
                                     </div>
-                                    {/* Info */}
                                     <div className="w-full md:w-80 bg-gray-900 border-l border-gray-800 flex flex-col p-4">
                                         <div className="flex justify-between items-center mb-6">
                                             <h3 className="font-bold text-gray-200 flex items-center gap-2"><Icons.Cpu className="text-green-500"/> Stockfish</h3>
